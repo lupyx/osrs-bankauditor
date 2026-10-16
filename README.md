@@ -82,14 +82,16 @@ NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets,
 
 ## Installing
 
-Bank Auditor is not on the Plugin Hub yet, so for now you run it from a copy of this repository.
+Bank Auditor is not on the Plugin Hub yet. RuneLite only loads plugins from outside the hub in developer mode, and the official launcher always turns developer mode off, so the build starts the client for you instead.
 
 1. Install JDK 11 or newer, then clone the repository.
-2. Run `./gradlew run` from the repository folder (`gradlew.bat run` on Windows). It downloads RuneLite and starts it in developer mode with Bank Auditor loaded. In IntelliJ you can instead open the folder as a Gradle project and run the `main` method in `src/test/java/io/lupix/runelite/bankauditor/BankAuditorPluginTest.java` with the VM option `-ea` and the program argument `--developer-mode`.
-3. The developer client uses the same `.runelite` folder as your normal client, so your profiles, settings and Plugin Hub plugins all come along.
+2. Run `./gradlew run` from the repository folder (`gradlew.bat run` on Windows). It builds the plugin, copies it to `.runelite/sideloaded-plugins` in your home folder, and starts RuneLite in developer mode. The client uses your normal `.runelite` folder, so your profiles, settings and Plugin Hub plugins all come along, and you can play as usual.
+3. RuneLite picks your active profile like it normally does. To use a different one, add its name: `./gradlew run -Pprofile=Main`.
 4. With a Jagex account, the client started this way can't log in through the Jagex Launcher. Open the RuneLite launcher settings ("RuneLite (configure)" on Windows, or run the launcher with `--configure`), add `--insecure-write-credentials` to the client arguments, and start RuneLite once from the Jagex Launcher. That saves a login token to `.runelite/credentials.properties` in your home folder, which the developer client then uses. Treat that file like a password, and delete it when you are done.
 
-Dropping the built jar into `.runelite/sideloaded-plugins` doesn't work with the normal client. RuneLite only reads that folder in developer mode, and it always turns developer mode off when the client is started by the official launcher.
+The launcher doesn't update this client. After a game update, if it says it is out of date, run `./gradlew run --refresh-dependencies` to get the newest RuneLite.
+
+`./gradlew sideload` only copies the jar, and `./gradlew unsideload` removes it. To debug in IntelliJ, open the folder as a Gradle project and run the `main` method in `src/test/java/io/lupix/runelite/bankauditor/BankAuditorPluginTest.java` with the VM option `-ea` and the program argument `--developer-mode`. That loads the plugin from the source, so run `unsideload` first or it shows up twice.
 
 To get it on the Plugin Hub so it installs like any other plugin:
 

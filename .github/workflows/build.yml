@@ -15,4 +15,7 @@ jobs:
         uses: gradle/actions/wrapper-validation@v4
 
       - name: Build and test in Docker
-        run: docker compose run --rm --build test build
+        run: docker compose run --rm --build test build sideload
+
+      - name: Check the run task
+        run: docker compose run --rm test run --dry-run

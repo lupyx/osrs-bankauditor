@@ -46,12 +46,43 @@ tasks.withType(Test).configureEach {
 	}
 }
 
-tasks.register('run', JavaExec) {
-	classpath = sourceSets.test.runtimeClasspath
-	mainClass = pluginMainClass
+// Running the plugin in your own client. RuneLite only reads .runelite/sideloaded-plugins in developer mode,
+// and the official launcher always turns developer mode off, so these tasks start the client themselves.
 
-	jvmArgs "-ea"
-	args "--developer-mode", "--debug"
+def sideloadedJar = new File(System.getProperty('user.home'), '.runelite/sideloaded-plugins/bank-auditor.jar')
+def pluginJar = tasks.named('jar').flatMap { it.archiveFile }
+
+tasks.register('sideload') {
+	group = 'runelite'
+	description = 'Copies the plugin jar into .runelite/sideloaded-plugins.'
+	dependsOn tasks.named('jar')
+	doLast {
+		sideloadedJar.parentFile.mkdirs()
+		java.nio.file.Files.copy(pluginJar.get().asFile.toPath(), sideloadedJar.toPath(),
+			java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+		println "Copied the plugin to ${sideloadedJar}"
+	}
+}
+
+tasks.register('unsideload', Delete) {
+	group = 'runelite'
+	description = 'Removes the plugin jar from .runelite/sideloaded-plugins.'
+	delete sideloadedJar
+}
+
+tasks.register('run', JavaExec) {
+	group = 'runelite'
+	description = 'Sideloads the plugin and starts RuneLite in developer mode. Add -Pprofile=<name> to pick a RuneLite profile.'
+	dependsOn 'sideload'
+	// The client and its dependencies only, the plugin itself comes from the sideloaded jar
+	classpath = configurations.testRuntimeClasspath
+	mainClass = 'net.runelite.client.RuneLite'
+
+	jvmArgs '-ea'
+	args '--developer-mode'
+	if (project.hasProperty('profile')) {
+		args '--profile', project.property('profile')
+	}
 }
 
 tasks.register('shadowJar', Jar) {
