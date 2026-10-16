@@ -1,0 +1,86 @@
+package io.lupix.runelite.bankauditor.loot;
+
+import com.google.gson.Gson;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import org.junit.Test;
+
+public class LootStateCodecTest
+{
+	private final LootStateCodec codec = new LootStateCodec(new Gson());
+
+	@Test
+	public void ledgerRoundTrip()
+	{
+		LootLedger ledger = new LootLedger();
+		ledger.addLoot(560, 1200);
+		Map<Integer, Long> owned = new HashMap<>();
+		owned.put(560, 6200L);
+		ledger.reconcile(owned);
+		ledger.addLoot(385, 3);
+
+		LootLedger loaded = codec.readLedger(codec.writeLedger(ledger));
+
+		assertEquals(1200, loaded.getLooted(560));
+		assertEquals(Long.valueOf(6200), loaded.snapshot().get(560).getLastTotal());
+		assertEquals(3, loaded.getPending(385));
+		assertNull(loaded.snapshot().get(385).getLastTotal());
+	}
+
+	@Test
+	public void historyRoundTrip()
+	{
+		LootHistory history = new LootHistory();
+		history.add(new LootRecord(1000, "Vorkath", LootSourceType.NPC, 732, new LootLocation(2272, 4065, 0, 9023, 302),
+			Arrays.asList(new LootItem(536, "Dragon bones", 2, 2500), new LootItem(1747, "Black dragonhide", 2, 3000))));
+		history.add(new LootRecord(2000, "Clue Scroll (Hard)", LootSourceType.EVENT, -1, null,
+			Arrays.asList(new LootItem(995, "Coins", 15000, 1))));
+
+		LootHistory loaded = codec.readHistory(codec.writeHistory(history));
+
+		assertEquals(history.oldestFirst(), loaded.oldestFirst());
+		LootRecord first = loaded.oldestFirst().get(0);
+		assertEquals(9023, first.getLocation().getRegionId());
+		assertEquals(5000, first.getItems().get(0).getValue());
+		assertEquals(LootSourceType.EVENT, loaded.oldestFirst().get(1).getType());
+	}
+
+	@Test
+	public void badDataLoadsEmpty()
+	{
+		assertEquals(0, codec.readLedger("{not json").size());
+		assertEquals(0, codec.readLedger("[1,2,3]").size());
+		assertEquals(0, codec.readLedger(null).size());
+		assertTrue(codec.readHistory("{\"oops\":true}").isEmpty());
+		assertTrue(codec.readHistory("").isEmpty());
+	}
+
+	@Test
+	public void toleratesMissingFields()
+	{
+		LootHistory loaded = codec.readHistory("[{\"timestamp\":5,\"source\":\"Goblin\"}]");
+
+		assertEquals(1, loaded.size());
+		LootRecord record = loaded.oldestFirst().get(0);
+		assertEquals("Goblin", record.getSource());
+		assertEquals(LootSourceType.OTHER, record.getType());
+		assertTrue(record.getItems().isEmpty());
+	}
+
+	@Test
+	public void countsRoundTripAndDropJunk()
+	{
+		Map<Integer, Long> counts = new HashMap<>();
+		counts.put(560, 6200L);
+		counts.put(4151, 1L);
+
+		assertEquals(counts, codec.readCounts(codec.writeCounts(counts)));
+		assertEquals(1, codec.readCounts("{\"560\":5,\"1\":0,\"2\":-3}").size());
+		assertNull(codec.readCounts("nope"));
+		assertNull(codec.readCounts(""));
+	}
+}

@@ -1,0 +1,10 @@
+# docker compose run --rm --build test
+services:
+  test:
+    build: .
+    volumes:
+      # Keeps downloaded dependencies between runs
+      - gradle-cache:/home/gradle/.gradle
+
+volumes:
+  gradle-cache:
