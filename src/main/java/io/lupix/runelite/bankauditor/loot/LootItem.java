@@ -1,5 +1,6 @@
 package io.lupix.runelite.bankauditor.loot;
 
+import com.google.gson.annotations.SerializedName;
 import java.util.Objects;
 
 /**
@@ -9,11 +10,14 @@ import java.util.Objects;
 public final class LootItem
 {
 	private final int id;
+	@SerializedName("n")
 	private final String name;
+	@SerializedName("q")
 	private final long quantity;
 	/**
 	 * Grand Exchange price of a single item when it was looted, 0 if unknown or untradeable.
 	 */
+	@SerializedName("p")
 	private final long price;
 
 	public LootItem(int id, String name, long quantity, long price)

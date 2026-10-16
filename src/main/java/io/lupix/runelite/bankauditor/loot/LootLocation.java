@@ -1,5 +1,6 @@
 package io.lupix.runelite.bankauditor.loot;
 
+import com.google.gson.annotations.SerializedName;
 import java.util.Objects;
 
 /**
@@ -10,8 +11,11 @@ public final class LootLocation
 {
 	private final int x;
 	private final int y;
+	@SerializedName("p")
 	private final int plane;
+	@SerializedName("r")
 	private final int regionId;
+	@SerializedName("w")
 	private final int world;
 
 	public LootLocation(int x, int y, int plane, int regionId, int world)
@@ -49,11 +53,21 @@ public final class LootLocation
 	}
 
 	/**
-	 * Short form used in tooltips and the side panel, for example "region 9023, world 302".
+	 * Name of the area the region belongs to, or null when the region has no known name.
+	 */
+	public String getAreaName()
+	{
+		return RegionNames.of(regionId);
+	}
+
+	/**
+	 * Short form used in tooltips and the side panel, for example "Lumbridge, world 302",
+	 * or "region 12345, world 302" when the area has no name.
 	 */
 	public String describe()
 	{
-		StringBuilder sb = new StringBuilder("region ").append(regionId);
+		String area = getAreaName();
+		StringBuilder sb = new StringBuilder(area != null ? area : "region " + regionId);
 		if (world > 0)
 		{
 			sb.append(", world ").append(world);
@@ -62,11 +76,11 @@ public final class LootLocation
 	}
 
 	/**
-	 * Long form with the tile, for example "2272, 4065, 0 (region 9023, world 302)".
+	 * Long form with the tile, for example "Tile 2272, 4065, 0 in region 9023".
 	 */
 	public String describeWithTile()
 	{
-		return x + ", " + y + ", " + plane + " (" + describe() + ")";
+		return "Tile " + x + ", " + y + ", " + plane + " in region " + regionId;
 	}
 
 	@Override

@@ -19,9 +19,10 @@ public class TooltipTextTest
 	private static final long NOW = 1000 * HOUR;
 	private static final int RUNE = 560;
 
-	private static LootRecord record(long hoursAgo, String source, int level, long quantity)
+	// Region ids: 9007 is Zulrah's shrine, 9023 is Vorkath's island, 1 has no name
+	private static LootRecord record(long hoursAgo, String source, int level, int region, long quantity)
 	{
-		return new LootRecord(NOW - hoursAgo * HOUR, source, LootSourceType.NPC, level, new LootLocation(1, 2, 0, 9023, 302),
+		return new LootRecord(NOW - hoursAgo * HOUR, source, LootSourceType.NPC, level, new LootLocation(1, 2, 0, region, 302),
 			Collections.singletonList(new LootItem(RUNE, "Death rune", quantity, 200)));
 	}
 
@@ -38,18 +39,18 @@ public class TooltipTextTest
 	{
 		ItemSummary item = new ItemSummary(RUNE, "Death rune", true, 6200, 1200, 1200, 200, null);
 		LootAttribution attribution = LootAttribution.of(RUNE, 1200, Arrays.asList(
-			record(2, "Zulrah", 725, 300),
-			record(30, "Vorkath", 732, 500),
-			record(50, "Kraken", 291, 100),
-			record(60, "Goblin", 2, 100)));
+			record(2, "Snakeling", 90, 9007, 300),
+			record(30, "Vorkath", 732, 9023, 500),
+			record(50, "Kraken", 291, 1, 100),
+			record(60, "Goblin", 2, 1, 100)));
 
 		String text = TooltipText.build(item, attribution, NOW, 3);
 
 		assertEquals("<col=ff9040>Death rune</col>"
 			+ "</br>From loot: 1,200 of 6,200"
-			+ "</br><col=a0a0a0>300 from Zulrah (lvl 725), 2 h ago, region 9023, world 302</col>"
-			+ "</br><col=a0a0a0>500 from Vorkath (lvl 732), 1 day ago, region 9023, world 302</col>"
-			+ "</br><col=a0a0a0>100 from Kraken (lvl 291), 2 days ago, region 9023, world 302</col>"
+			+ "</br><col=a0a0a0>300 from Snakeling (lvl 90), 2 h ago, Zulrah, world 302</col>"
+			+ "</br><col=a0a0a0>500 from Vorkath (lvl 732), 1 day ago, world 302</col>"
+			+ "</br><col=a0a0a0>100 from Kraken (lvl 291), 2 days ago, region 1, world 302</col>"
 			+ "</br><col=a0a0a0>+300 from older loot</col>"
 			+ "</br><col=ffc800>Sellable: 1,200 (240K gp)</col>", text);
 	}

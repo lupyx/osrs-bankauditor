@@ -101,9 +101,10 @@ public final class TooltipText
 		StringBuilder sb = new StringBuilder();
 		sb.append(Formats.commas(share.getQuantity())).append(" from ").append(record.describeSource())
 			.append(", ").append(Formats.ago(now, record.getTimestamp()));
-		if (record.getLocation() != null)
+		String where = record.describeLocation();
+		if (where != null)
 		{
-			sb.append(", ").append(record.getLocation().describe());
+			sb.append(", ").append(where);
 		}
 		return sb.toString();
 	}

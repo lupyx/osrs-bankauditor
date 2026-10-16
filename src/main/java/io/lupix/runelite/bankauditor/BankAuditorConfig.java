@@ -69,7 +69,7 @@ public interface BankAuditorConfig extends Config
 		section = lootSection,
 		position = 2
 	)
-	@Range(min = 50, max = 2000)
+	@Range(min = 50, max = 1000)
 	default int maxRecords()
 	{
 		return 500;

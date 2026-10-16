@@ -236,9 +236,10 @@ public class BankAuditorPanel extends PluginPanel
 		when.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		header.add(when, BorderLayout.EAST);
 
-		if (record.getLocation() != null)
+		String location = record.describeLocation();
+		if (location != null)
 		{
-			JLabel where = new JLabel(record.getLocation().describe());
+			JLabel where = new JLabel(location);
 			where.setFont(FontManager.getRunescapeSmallFont());
 			where.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 			where.setToolTipText(record.getLocation().describeWithTile());

@@ -11,8 +11,8 @@ It remembers what you got, from what, when and where. When you open your bank it
 ```
 Death rune
 From loot: 1,200 of 6,200
-800 from Abyssal demon (lvl 124), 2 h ago, region 6995, world 302
-400 from Greater demon (lvl 92), 1 day ago, region 5022, world 330
+800 from Abyssal demon (lvl 124), 2 h ago, Catacombs of Kourend, world 302
+400 from Greater demon (lvl 92), 1 day ago, Chasm of Fire, world 330
 Sellable: 1,200 (240K gp)
 ```
 
@@ -29,7 +29,7 @@ Sellable: 1,200 (240K gp)
 | `Death rune:5k` | keep 5,000 death runes, anything above that can be sold |
 | `Cannonball:2k` | keep 2,000 (k, m and b work) |
 
-**Loot history.** The side panel lists recent drops with the source, how long ago, and the region and world. Hover the region to see the exact tile.
+**Loot history.** The side panel lists recent drops with the source, how long ago, and the area and world. Hover the area to see the exact tile.
 
 ## Settings
 
@@ -74,7 +74,7 @@ NPC kills and PvP kills are always tracked. Chests, clue caskets, raids, minigam
 - Potion storage, the rune pouch, the looting bag (outside the bank visit where you empty it) and the group storage of group ironmen are not part of the bank as far as the client is concerned, so loot that goes there looks used up.
 - The first time an item is looted the plugin has no earlier count for it, so it assumes the whole drop is still there at the next bank visit.
 - The `sellable` bank tag is a Bank Tags search, so it needs the Bank Tags plugin (on by default). It does not work in the Grand Exchange item search.
-- Locations are a region id and world, since the game has no area names to read.
+- Area names come from the table RuneLite uses for Discord status. Places it does not know show up as a region id.
 
 ## Building and testing
 

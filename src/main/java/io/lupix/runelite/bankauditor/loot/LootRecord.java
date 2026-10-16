@@ -1,5 +1,6 @@
 package io.lupix.runelite.bankauditor.loot;
 
+import com.google.gson.annotations.SerializedName;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -10,11 +11,18 @@ import java.util.Objects;
  */
 public final class LootRecord
 {
+	// Short names keep the saved history small, it is synced with the RuneLite account
+	@SerializedName("t")
 	private final long timestamp;
+	@SerializedName("s")
 	private final String source;
+	@SerializedName("k")
 	private final LootSourceType type;
+	@SerializedName("c")
 	private final int combatLevel;
+	@SerializedName("l")
 	private final LootLocation location;
+	@SerializedName("i")
 	private final List<LootItem> items;
 
 	public LootRecord(long timestamp, String source, LootSourceType type, int combatLevel, LootLocation location, List<LootItem> items)
@@ -93,6 +101,24 @@ public final class LootRecord
 	/**
 	 * The source name with its combat level when it has one, for example "Vorkath (lvl 732)".
 	 */
+	/**
+	 * Where the loot dropped, for display, or null when unknown. The area name is left out when it only
+	 * repeats the source, like Vorkath at Vorkath.
+	 */
+	public String describeLocation()
+	{
+		if (location == null)
+		{
+			return null;
+		}
+		String area = location.getAreaName();
+		if (area != null && area.equalsIgnoreCase(getSource()))
+		{
+			return location.getWorld() > 0 ? "world " + location.getWorld() : null;
+		}
+		return location.describe();
+	}
+
 	public String describeSource()
 	{
 		if (combatLevel > 0)

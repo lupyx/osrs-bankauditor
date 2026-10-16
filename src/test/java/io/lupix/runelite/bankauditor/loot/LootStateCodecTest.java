@@ -62,7 +62,7 @@ public class LootStateCodecTest
 	@Test
 	public void toleratesMissingFields()
 	{
-		LootHistory loaded = codec.readHistory("[{\"timestamp\":5,\"source\":\"Goblin\"}]");
+		LootHistory loaded = codec.readHistory("[{\"t\":5,\"s\":\"Goblin\"}]");
 
 		assertEquals(1, loaded.size());
 		LootRecord record = loaded.oldestFirst().get(0);
