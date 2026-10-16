@@ -364,6 +364,25 @@ public class LootLedgerTest
 	}
 
 	@Test
+	public void lootEmptiedIntoTheBankAsItClosedComesBackFromTheBankOnly()
+	{
+		ledger.addLoot(DEATH_RUNE, 150, 0L);
+		ledger.addLoot(SHARK, 20, 0L);
+		// The runes and sharks are in the looting bag, so the bank visit can't see them
+		ledger.reconcile(Map.of());
+		assertEquals(150, ledger.getMissing(DEATH_RUNE));
+
+		// The bag was emptied as the bank closed. Before the next visit, 30 sharks are bought.
+		// The next bank snapshot shows 150 more runes but no more sharks, because the bought ones are in the inventory.
+		ledger.restoreMissingFromBank(Map.of(DEATH_RUNE, 150L));
+		ledger.endBankVisit();
+		ledger.reconcile(owned(DEATH_RUNE, 150, SHARK, 30));
+
+		assertEquals(150, ledger.getLooted(DEATH_RUNE));
+		assertEquals(0, ledger.getLooted(SHARK));
+	}
+
+	@Test
 	public void restoreMissingNeverTakesLootAway()
 	{
 		ledger.addLoot(SHARK, 10, 100L);

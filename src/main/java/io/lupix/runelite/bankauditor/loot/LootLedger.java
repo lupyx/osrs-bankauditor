@@ -293,6 +293,34 @@ public final class LootLedger
 	}
 
 	/**
+	 * Gives back missing loot that turned up in the bank, at most what the bank gained of each item. Used when loot
+	 * was emptied from a container the client can't see (a looting bag, a sack) straight into the bank, and the bank
+	 * closed before the server sent the result, so the next bank snapshot is the first place it can show up.
+	 *
+	 * @param bankGain canonical item id to how much more of it the bank holds than before the deposit
+	 * @return true when any loot was restored
+	 */
+	public boolean restoreMissingFromBank(Map<Integer, Long> bankGain)
+	{
+		boolean changed = false;
+		for (Map.Entry<Integer, Entry> mapEntry : entries.entrySet())
+		{
+			Entry e = mapEntry.getValue();
+			long gain = bankGain.getOrDefault(mapEntry.getKey(), 0L);
+			if (e.missing <= 0 || e.lastTotal == null || gain <= 0)
+			{
+				continue;
+			}
+			long restored = Math.min(gain, e.missing);
+			e.looted += restored;
+			e.missing -= restored;
+			e.lastTotal += restored;
+			changed = true;
+		}
+		return changed;
+	}
+
+	/**
 	 * Called when the bank closes. Loot that hasn't turned up by now is gone for good.
 	 */
 	public void endBankVisit()
