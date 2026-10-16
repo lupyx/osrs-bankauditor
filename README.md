@@ -61,7 +61,7 @@ The client only knows your whole bank while it is open, so the plugin settles it
 - If you have less than it expected, the difference comes out of the loot first. That covers loot you never picked up, sold, alched, ate or dropped. Anything above what you had before is treated as loot, so using or selling items eats into the loot before your own supply.
 - If you have more than it expected, the extra is yours (bought, crafted, and so on). The exception is loot that went missing earlier in the same bank visit, like when you empty a looting bag into the bank.
 
-Worn items and items in a sell offer count as owned for this, but they are in use or already being sold, so they are never shown as sellable. An offer you abort keeps its items counted as loot. The client can't see inside the collection box, so after you abort a sale the plugin assumes that any of that item you gain afterwards was collected from the box.
+Worn items and items in a sell offer count as owned for this, but they are in use or already being sold, so they are never shown as sellable. An offer you abort keeps its items counted as loot until you collect them. The client can't see inside the collection box, so if you take the items out but leave the coins, those items count twice until the slot is empty. That only makes the plugin show less loot, never more.
 
 Between bank visits the numbers follow the same rule as you go. Sell 500 looted runes at the Grand Exchange and the sellable count drops by 500 straight away, so the highlight never moves on to your own stack.
 
@@ -75,7 +75,8 @@ NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets,
 
 - Potion storage, the rune pouch, the looting bag (outside the bank visit where you empty it) and the group storage of group ironmen are not part of the bank as far as the client is concerned, so loot that goes there looks used up.
 - For kills, the plugin remembers what you owned when the drop happened. Chest, clue and other rewards often land straight in your inventory, so the first time an item comes from one of those (or before you have opened your bank since logging in) the plugin assumes the whole reward is still there at the next bank visit.
-- If you close the bank at the same moment as a withdraw or deposit, the client never receives the new bank contents. The plugin notices this and waits for your next bank visit before settling anything.
+- If you close the bank at the same moment as a withdraw or deposit, the client never receives the new bank contents. The plugin works out the change from your inventory instead.
+- Items you collect from the Grand Exchange straight to your bank, or put in through a deposit box, aren't seen until you next open the bank.
 - The keep list editor in the config page does not refresh by itself. If it is open while you use the Keep menu option, close and reopen it before typing in it, or your edit will undo the menu change.
 - The `sellable` bank tag is a Bank Tags search, so it needs the Bank Tags plugin (on by default). It does not work in the Grand Exchange item search.
 - Area names come from the table RuneLite uses for Discord status. Places it does not know show up as a region id.

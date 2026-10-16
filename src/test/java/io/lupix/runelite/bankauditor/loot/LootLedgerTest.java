@@ -294,6 +294,32 @@ public class LootLedgerTest
 	}
 
 	@Test
+	public void baselineDoesNotSwallowEarlierLootThatIsStillPending()
+	{
+		// A clue gives 300 (no baseline), then a kill drops 200 while the clue runes are in the inventory
+		ledger.addLoot(DEATH_RUNE, 300);
+		ledger.addLoot(DEATH_RUNE, 200, 5300L);
+
+		assertEquals(500, ledger.estimateLooted(DEATH_RUNE, 5500));
+		ledger.reconcile(owned(DEATH_RUNE, 5500));
+		assertEquals(500, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
+	public void baselineThatIsTooLowDoesNotTurnMyItemsIntoLoot()
+	{
+		ledger.addLoot(DEATH_RUNE, 1, 5000L);
+		ledger.reconcile(owned(DEATH_RUNE, 5000));
+		ledger.endBankVisit();
+
+		// 1,000 went into a rune pouch, so the plugin only sees 4,000 when a drop of 200 is left on the floor
+		ledger.addLoot(DEATH_RUNE, 200, 4000L);
+		ledger.reconcile(owned(DEATH_RUNE, 5000));
+
+		assertEquals(0, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
 	public void gainsBeforeADropAreMineEvenWithLootAlreadyThere()
 	{
 		ledger.addLoot(DEATH_RUNE, 300, 5000L);

@@ -13,7 +13,6 @@ import io.lupix.runelite.bankauditor.loot.LootStateCodec;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.sell.KeepList;
 import io.lupix.runelite.bankauditor.sell.KeepRule;
-import io.lupix.runelite.bankauditor.sell.SellOffers;
 import io.lupix.runelite.bankauditor.sell.SellableCalculator;
 import io.lupix.runelite.bankauditor.ui.BankAuditorOverlay;
 import io.lupix.runelite.bankauditor.ui.BankAuditorPanel;
@@ -198,7 +197,6 @@ public class BankAuditorPlugin extends Plugin
 	private Map<Integer, Long> wornBeforeTick = Collections.emptyMap();
 	private int inventoryTick = -1;
 	private int wornTick = -1;
-	private final SellOffers sellOffers = new SellOffers();
 	/**
 	 * Items sitting in Grand Exchange sell offers, or waiting in the collection box after an aborted sale.
 	 * They are still owned, and they are the first thing that stops counting as sellable.
@@ -224,12 +222,11 @@ public class BankAuditorPlugin extends Plugin
 	private boolean visitEnding;
 	private int visitEndTick;
 	/**
-	 * Order of the last click that moves items in or out of the bank, and of the last bank update. When the click
-	 * is newer, the bank closed before the server sent the result, so the bank snapshot is out of date.
+	 * Client ticks ({@link Client#getTickCount()}) of the last click that moves items in or out of the bank and of
+	 * the last bank update. See {@link #checkBankCloseRace()}.
 	 */
-	private int bankEventSeq;
-	private int lastBankAction;
-	private int lastBankUpdateSeq;
+	private int lastBankActionTick = -2;
+	private int bankUpdateTick = -2;
 
 	private boolean ledgerDirty;
 	private boolean historyDirty;
@@ -291,14 +288,7 @@ public class BankAuditorPlugin extends Plugin
 					reconcileNeeded = true;
 					onBankContainer(bank);
 				}
-				GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
-				if (offers != null)
-				{
-					for (int slot = 0; slot < offers.length; slot++)
-					{
-						updateSellOffer(slot, offers[slot]);
-					}
-				}
+				offerCounts = countSellOffers();
 				onContentsChanged();
 			}
 		});
@@ -540,23 +530,8 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onGrandExchangeOfferChanged(GrandExchangeOfferChanged event)
 	{
-		updateSellOffer(event.getSlot(), event.getOffer());
+		offerCounts = countSellOffers();
 		onContentsChanged();
-	}
-
-	private void updateSellOffer(int slot, GrandExchangeOffer offer)
-	{
-		if (offer == null || offer.getItemId() <= 0)
-		{
-			sellOffers.update(slot, -1, SellOffers.Kind.OTHER, 0, 0, 0);
-			return;
-		}
-		GrandExchangeOfferState state = offer.getState();
-		SellOffers.Kind kind = state == GrandExchangeOfferState.SELLING ? SellOffers.Kind.SELLING
-			: state == GrandExchangeOfferState.CANCELLED_SELL ? SellOffers.Kind.CANCELLED
-			: SellOffers.Kind.OTHER;
-		int id = itemManager.canonicalize(offer.getItemId());
-		sellOffers.update(slot, id, kind, offer.getTotalQuantity(), offer.getQuantitySold(), heldOutsideGe(id));
 	}
 
 	@Subscribe
@@ -573,7 +548,7 @@ public class BankAuditorPlugin extends Plugin
 		if (option.startsWith("Deposit")
 			|| (bankWidget && (option.startsWith("Withdraw") || option.startsWith("Empty"))))
 		{
-			lastBankAction = ++bankEventSeq;
+			lastBankActionTick = client.getTickCount();
 		}
 	}
 
@@ -583,18 +558,56 @@ public class BankAuditorPlugin extends Plugin
 		bankTrusted = true;
 		bankDirty = true;
 		lastBankUpdate = tickCounter;
-		lastBankUpdateSeq = ++bankEventSeq;
+		bankUpdateTick = client.getTickCount();
 		onContentsChanged();
 	}
 
-	private boolean bankUpdatePending()
+	/**
+	 * Runs at the end of every client tick, once that tick's container updates are in. A withdraw or deposit
+	 * changes the bank and the inventory in the same tick, but when the bank is closed in the same moment, the
+	 * server only sends the inventory. So when the inventory or worn items change right after a bank click, with
+	 * the bank closed and no bank update alongside, the bank snapshot gets the opposite change.
+	 */
+	private void checkBankCloseRace()
 	{
-		return lastBankAction > lastBankUpdateSeq;
+		int tick = client.getTickCount();
+		boolean carriedChanged = inventoryTick == tick || wornTick == tick;
+		if (!carriedChanged || bankOpen || bankCounts == null || bankUpdateTick == tick || lastBankActionTick < tick - 1)
+		{
+			return;
+		}
+
+		Map<Integer, Long> before = new HashMap<>(inventoryTick == tick ? inventoryBeforeTick : inventoryCounts);
+		(wornTick == tick ? wornBeforeTick : wornCounts).forEach((id, qty) -> before.merge(id, qty, Long::sum));
+		Map<Integer, Long> after = new HashMap<>(inventoryCounts);
+		wornCounts.forEach((id, qty) -> after.merge(id, qty, Long::sum));
+
+		Set<Integer> ids = new HashSet<>(before.keySet());
+		ids.addAll(after.keySet());
+		Map<Integer, Long> bank = new HashMap<>(bankCounts);
+		for (int id : ids)
+		{
+			long moved = after.getOrDefault(id, 0L) - before.getOrDefault(id, 0L);
+			if (moved != 0)
+			{
+				long left = bank.getOrDefault(id, 0L) - moved;
+				if (left > 0)
+				{
+					bank.put(id, left);
+				}
+				else
+				{
+					bank.remove(id);
+				}
+			}
+		}
+		bankCounts = bank;
+		bankDirty = true;
+		onContentsChanged();
 	}
 
 	private void onContentsChanged()
 	{
-		offerCounts = sellOffers.counts(this::heldOutsideGe);
 		lastContainerChange = tickCounter;
 		if (bankOpen)
 		{
@@ -640,21 +653,12 @@ public class BankAuditorPlugin extends Plugin
 	private void finishBankVisit()
 	{
 		visitEnding = false;
-		if (bankUpdatePending())
+		if (ledger.restoreMissing(ownedTotals()))
 		{
-			// The bank closed before the server sent the result of the last withdraw or deposit. The snapshot is
-			// out of date, so don't book anything from it. Missing loot stays open until the next visit.
-			bankTrusted = false;
+			panelDirty = true;
+			clearCaches();
 		}
-		else
-		{
-			if (ledger.restoreMissing(ownedTotals()))
-			{
-				panelDirty = true;
-				clearCaches();
-			}
-			ledger.endBankVisit();
-		}
+		ledger.endBankVisit();
 		ledgerDirty = true;
 		saveState(false);
 	}
@@ -662,6 +666,7 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
+		checkBankCloseRace();
 		tickCounter++;
 		// Tooltips say "5 min ago", and prices change, so rebuild them now and then
 		clearCaches();
@@ -672,8 +677,7 @@ public class BankAuditorPlugin extends Plugin
 			finishBankVisit();
 		}
 
-		if (bankOpen && lastBankUpdate >= bankOpenedTick && !bankUpdatePending() && reconcileNeeded
-			&& tickCounter - lastContainerChange >= QUIET_TICKS)
+		if (bankOpen && lastBankUpdate >= bankOpenedTick && reconcileNeeded && tickCounter - lastContainerChange >= QUIET_TICKS)
 		{
 			reconcileNeeded = false;
 			if (ledger.reconcile(ownedTotals()))
@@ -718,16 +722,8 @@ public class BankAuditorPlugin extends Plugin
 
 	private long ownedTotal(int id)
 	{
-		return heldOutsideGe(id) + offerCounts.getOrDefault(id, 0L);
-	}
-
-	/**
-	 * Bank, inventory and worn items, without the Grand Exchange.
-	 */
-	private long heldOutsideGe(int id)
-	{
 		long bank = bankCounts == null ? 0 : bankCounts.getOrDefault(id, 0L);
-		return bank + inventoryCounts.getOrDefault(id, 0L) + wornCounts.getOrDefault(id, 0L);
+		return bank + inventoryCounts.getOrDefault(id, 0L) + wornCounts.getOrDefault(id, 0L) + offerCounts.getOrDefault(id, 0L);
 	}
 
 	/**
@@ -750,8 +746,38 @@ public class BankAuditorPlugin extends Plugin
 		wornBeforeTick = Collections.emptyMap();
 		inventoryTick = -1;
 		wornTick = -1;
-		sellOffers.clear();
 		offerCounts = Collections.emptyMap();
+	}
+
+	/**
+	 * Unsold items in sell offers, including aborted offers until their slot is collected. The client can't see
+	 * the collection box, so items taken out of an aborted offer whose coins are still waiting count twice.
+	 */
+	private Map<Integer, Long> countSellOffers()
+	{
+		GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
+		if (offers == null)
+		{
+			return Collections.emptyMap();
+		}
+		Map<Integer, Long> counts = new HashMap<>();
+		for (GrandExchangeOffer offer : offers)
+		{
+			if (offer == null || offer.getItemId() <= 0)
+			{
+				continue;
+			}
+			GrandExchangeOfferState state = offer.getState();
+			if (state == GrandExchangeOfferState.SELLING || state == GrandExchangeOfferState.CANCELLED_SELL)
+			{
+				long unsold = offer.getTotalQuantity() - offer.getQuantitySold();
+				if (unsold > 0)
+				{
+					counts.merge(itemManager.canonicalize(offer.getItemId()), unsold, Long::sum);
+				}
+			}
+		}
+		return counts;
 	}
 
 	private Map<Integer, Long> count(ItemContainer container)
