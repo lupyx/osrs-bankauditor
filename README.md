@@ -80,6 +80,24 @@ NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets,
 - The `sellable` bank tag is a Bank Tags search, so it needs the Bank Tags plugin (on by default). It does not work in the Grand Exchange item search.
 - Area names come from the table RuneLite uses for Discord status. Places it does not know show up as a region id.
 
+## Installing
+
+Bank Auditor is not on the Plugin Hub yet, so for now you run it from a copy of this repository.
+
+1. Install JDK 11 or newer, then clone the repository.
+2. Run `./gradlew run` from the repository folder (`gradlew.bat run` on Windows). It downloads RuneLite and starts it in developer mode with Bank Auditor loaded. In IntelliJ you can instead open the folder as a Gradle project and run the `main` method in `src/test/java/io/lupix/runelite/bankauditor/BankAuditorPluginTest.java` with the VM option `-ea` and the program argument `--developer-mode`.
+3. With a Jagex account, the client started this way can't log in through the Jagex Launcher. Open the RuneLite launcher settings ("RuneLite (configure)" on Windows, or run the launcher with `--configure`), add `--insecure-write-credentials` to the client arguments, and start RuneLite once from the Jagex Launcher. That saves a login token to `.runelite/credentials.properties` in your home folder, which the developer client then uses. Treat that file like a password, and delete it when you are done.
+
+To get it on the Plugin Hub so it installs like any other plugin:
+
+1. Make this repository public.
+2. Fork [runelite/plugin-hub](https://github.com/runelite/plugin-hub) and add a file `plugins/bank-auditor` containing:
+   ```
+   repository=https://github.com/lupyx/osrs-bankauditor.git
+   commit=<full hash of the commit to release>
+   ```
+3. Open a pull request. The RuneLite team reviews the code, and once it is merged the plugin shows up in the Plugin Hub in every client. Each update is another pull request that changes the commit hash.
+
 ## Building and testing
 
 Tests run in Docker, so you only need Docker installed:
@@ -89,8 +107,6 @@ docker compose run --rm --build test
 ```
 
 That builds the plugin with Gradle and JDK 11 inside the container and runs the unit tests. Pass a different Gradle task at the end if you want one, for example `docker compose run --rm --build test test`. Downloaded dependencies are kept in a Docker volume between runs.
-
-To try the plugin in a real client, run `./gradlew run` (needs JDK 11 or newer). It starts RuneLite in developer mode with Bank Auditor loaded.
 
 GitHub Actions runs the same Docker build on every push.
 
