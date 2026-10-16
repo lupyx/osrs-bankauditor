@@ -123,11 +123,28 @@ public final class LootLedger
 	 */
 	public void addLoot(int itemId, long quantity)
 	{
+		addLoot(itemId, quantity, null);
+	}
+
+	/**
+	 * Books loot that just dropped, with what the player owned of the item right before the drop.
+	 * The baseline is only used when the ledger knows nothing about the item yet. Without it, the first
+	 * reconcile has to assume the whole drop is still there.
+	 *
+	 * @param baseline quantity owned just before the drop, or null when unknown
+	 */
+	public void addLoot(int itemId, long quantity, Long baseline)
+	{
 		if (quantity <= 0)
 		{
 			return;
 		}
-		entries.computeIfAbsent(itemId, k -> new Entry()).pending += quantity;
+		Entry e = entries.computeIfAbsent(itemId, k -> new Entry());
+		if (e.lastTotal == null && baseline != null && e.isEmpty())
+		{
+			e.lastTotal = Math.max(0, baseline);
+		}
+		e.pending += quantity;
 	}
 
 	/**
@@ -152,8 +169,9 @@ public final class LootLedger
 	}
 
 	/**
-	 * Best guess at how much of {@code currentTotal} is loot right now, counting loot that hasn't been
-	 * reconciled yet. Used for display so numbers don't jump around before the first reconcile.
+	 * Best guess at how much of {@code currentTotal} is loot right now, between reconciles. Used for display.
+	 * It applies the same "loot goes first" rule as {@link #reconcile} without changing anything, so selling
+	 * or using looted items shows up straight away instead of at the next bank visit.
 	 */
 	public long estimateLooted(int itemId, long currentTotal)
 	{
@@ -162,7 +180,16 @@ public final class LootLedger
 		{
 			return 0;
 		}
-		return Math.min(e.looted + e.pending, currentTotal);
+		long available = e.looted + e.pending;
+		if (e.lastTotal != null)
+		{
+			long shortfall = e.lastTotal + e.pending - currentTotal;
+			if (shortfall > 0)
+			{
+				available -= Math.min(shortfall, available);
+			}
+		}
+		return Math.min(available, currentTotal);
 	}
 
 	/**
@@ -217,6 +244,37 @@ public final class LootLedger
 			e.pending = 0;
 			e.missing = missing;
 			e.lastTotal = owned;
+		}
+		return changed;
+	}
+
+	/**
+	 * Gives back loot that went missing earlier in this bank visit if it has turned up, without taking anything
+	 * away. Used when the bank closes before a full reconcile could run, for example right after emptying a looting
+	 * bag. Losses are left for the next full reconcile, which sees the whole bank.
+	 *
+	 * @return true when any loot was restored
+	 */
+	public boolean restoreMissing(Map<Integer, Long> totals)
+	{
+		boolean changed = false;
+		for (Map.Entry<Integer, Entry> mapEntry : entries.entrySet())
+		{
+			Entry e = mapEntry.getValue();
+			if (e.missing <= 0 || e.lastTotal == null)
+			{
+				continue;
+			}
+			long owned = Math.max(0, totals.getOrDefault(mapEntry.getKey(), 0L));
+			long unexplained = owned - e.lastTotal - e.pending;
+			if (unexplained > 0)
+			{
+				long restored = Math.min(unexplained, e.missing);
+				e.looted += restored;
+				e.missing -= restored;
+				e.lastTotal += restored;
+				changed = true;
+			}
 		}
 		return changed;
 	}

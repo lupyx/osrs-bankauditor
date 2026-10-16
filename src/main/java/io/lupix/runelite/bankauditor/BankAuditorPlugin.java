@@ -30,12 +30,18 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.GrandExchangeOffer;
+import net.runelite.api.GrandExchangeOfferState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
@@ -43,10 +49,14 @@ import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
+import net.runelite.api.WorldEntity;
+import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.WidgetClosed;
@@ -103,12 +113,27 @@ public class BankAuditorPlugin extends Plugin
 	 * Moving items between the bank and the inventory updates two containers, not always in the same tick.
 	 */
 	private static final int QUIET_TICKS = 2;
+	/**
+	 * After the bank closes, how long to wait for late container updates before the visit is wrapped up.
+	 */
+	private static final int VISIT_END_MAX_TICKS = 5;
 	private static final int SAVE_INTERVAL_TICKS = 50;
 	private static final int PANEL_REFRESH_TICKS = 3;
 	private static final int PANEL_CLOCK_TICKS = 100;
 	private static final int PANEL_LOOT_RECORDS = 50;
 	private static final int TOOLTIP_SOURCES = 3;
 	private static final long DAY_MILLIS = TimeUnit.DAYS.toMillis(1);
+	private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
+
+	// Same message the Loot Tracker uses to spot pickpocketing
+	private static final Pattern PICKPOCKET = Pattern.compile("You pick (the )?(?<target>.+)'s? pocket.*");
+
+	// Player kills in these minigames drop minigame-only items. The Loot Tracker skips them too.
+	private static final Set<Integer> MINIGAME_PVP_REGIONS = Set.of(
+		// Last Man Standing
+		13658, 13659, 13660, 13914, 13915, 13916, 13918, 13919, 13920, 14174, 14175, 14176, 14430, 14431, 14432,
+		// Soul Wars
+		8493, 8749, 9005);
 
 	@Inject
 	private Client client;
@@ -157,6 +182,11 @@ public class BankAuditorPlugin extends Plugin
 	private Map<Integer, Long> bankCounts;
 	private Map<Integer, Long> inventoryCounts = Collections.emptyMap();
 	private Map<Integer, Long> wornCounts = Collections.emptyMap();
+	/**
+	 * Items sitting in Grand Exchange sell offers, or waiting in the collection box after an aborted sale.
+	 * They are still owned, and they are the first thing that stops counting as sellable.
+	 */
+	private Map<Integer, Long> offerCounts = Collections.emptyMap();
 	private volatile KeepList keepList = KeepList.EMPTY;
 
 	/**
@@ -166,9 +196,16 @@ public class BankAuditorPlugin extends Plugin
 
 	private int tickCounter;
 	private boolean bankOpen;
-	private boolean bankSeenThisVisit;
+	private int bankOpenedTick;
+	/**
+	 * Tick of the last bank container update. The container only exists while the bank is open,
+	 * so an update at or after {@link #bankOpenedTick} means the bank is fully known for this visit.
+	 */
+	private int lastBankUpdate = -1;
 	private boolean reconcileNeeded;
 	private int lastContainerChange;
+	private boolean visitEnding;
+	private int visitEndTick;
 
 	private boolean ledgerDirty;
 	private boolean historyDirty;
@@ -180,6 +217,7 @@ public class BankAuditorPlugin extends Plugin
 
 	private Plugin lootTracker;
 	private volatile boolean lootTrackerActive;
+	private int pickpocketTick = -1;
 
 	// Per tick caches for the overlay, which asks for every visible item every frame
 	private final Map<Integer, ItemSummary> summaries = new HashMap<>();
@@ -220,11 +258,14 @@ public class BankAuditorPlugin extends Plugin
 				switchProfile(configManager.getRSProfileKey());
 				inventoryCounts = count(client.getItemContainer(InventoryID.INV));
 				wornCounts = count(client.getItemContainer(InventoryID.WORN));
+				offerCounts = countSellOffers();
 				ItemContainer bank = client.getItemContainer(InventoryID.BANK);
 				if (bank != null)
 				{
 					// Turned on with the bank already open
 					bankOpen = true;
+					bankOpenedTick = tickCounter;
+					reconcileNeeded = true;
 					onBankContainer(bank);
 				}
 			}
@@ -246,9 +287,11 @@ public class BankAuditorPlugin extends Plugin
 			bankCounts = null;
 			inventoryCounts = Collections.emptyMap();
 			wornCounts = Collections.emptyMap();
+			offerCounts = Collections.emptyMap();
 			profileKey = null;
 			bankOpen = false;
-			bankSeenThisVisit = false;
+			lastBankUpdate = -1;
+			visitEnding = false;
 			reconcileNeeded = false;
 			lootTracker = null;
 			clearCaches();
@@ -281,16 +324,28 @@ public class BankAuditorPlugin extends Plugin
 	{
 		if (!lootTrackerActive)
 		{
+			// The server sends this for pickpocketing too, and then the items are already in the inventory
+			LootSourceType type = pickpocketTick == client.getTickCount() ? LootSourceType.PICKPOCKET : LootSourceType.NPC;
 			NPCComposition npc = event.getComposition();
 			addLoot(npc == null ? null : Text.removeTags(npc.getName()), npc == null ? -1 : npc.getCombatLevel(),
-				LootSourceType.NPC, event.getItems());
+				type, event.getItems());
+		}
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		if ((event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM)
+			&& PICKPOCKET.matcher(event.getMessage()).matches())
+		{
+			pickpocketTick = client.getTickCount();
 		}
 	}
 
 	@Subscribe
 	public void onPlayerLootReceived(PlayerLootReceived event)
 	{
-		if (!lootTrackerActive)
+		if (!lootTrackerActive && !inMinigamePvp())
 		{
 			Player player = event.getPlayer();
 			addLoot(player == null ? null : player.getName(), player == null ? -1 : player.getCombatLevel(),
@@ -344,12 +399,15 @@ public class BankAuditorPlugin extends Plugin
 			return;
 		}
 
+		// Kills drop their loot on the floor, so what the player owns right now is what they had before the drop.
+		// Chests, clues and pickpocketing often put the items straight in the inventory, so there is no such moment.
+		boolean groundDrop = type == LootSourceType.NPC || type == LootSourceType.PLAYER;
 		List<LootItem> items = new ArrayList<>(quantities.size());
 		for (Map.Entry<Integer, Long> e : quantities.entrySet())
 		{
 			int id = e.getKey();
 			items.add(new LootItem(id, itemManager.getItemComposition(id).getMembersName(), e.getValue(), itemManager.getItemPrice(id)));
-			ledger.addLoot(id, e.getValue());
+			ledger.addLoot(id, e.getValue(), groundDrop && bankCounts != null ? ownedTotal(id) : null);
 		}
 
 		long now = System.currentTimeMillis();
@@ -366,6 +424,18 @@ public class BankAuditorPlugin extends Plugin
 		clearCaches();
 	}
 
+	private boolean inMinigamePvp()
+	{
+		for (int region : client.getTopLevelWorldView().getMapRegions())
+		{
+			if (MINIGAME_PVP_REGIONS.contains(region))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private LootLocation currentLocation()
 	{
 		Player player = client.getLocalPlayer();
@@ -373,6 +443,17 @@ public class BankAuditorPlugin extends Plugin
 		if (local == null)
 		{
 			return null;
+		}
+		WorldView view = player.getWorldView();
+		if (view != null && !view.isTopLevel())
+		{
+			// On a boat the player's position is relative to the boat, so move it onto the main map first
+			WorldEntity boat = client.getTopLevelWorldView().worldEntities().byIndex(view.getId());
+			local = boat == null ? null : boat.transformToMainWorld(local);
+			if (local == null)
+			{
+				return null;
+			}
 		}
 		// Inside instances this gives the real map location instead of the instance copy
 		WorldPoint point = WorldPoint.fromLocalInstance(client, local);
@@ -412,12 +493,18 @@ public class BankAuditorPlugin extends Plugin
 		}
 	}
 
+	@Subscribe
+	public void onGrandExchangeOfferChanged(GrandExchangeOfferChanged event)
+	{
+		offerCounts = countSellOffers();
+		onContentsChanged();
+	}
+
 	private void onBankContainer(ItemContainer bank)
 	{
 		bankCounts = count(bank);
 		bankDirty = true;
-		// The bank container only exists while the bank is open, so getting it means the bank is fully known
-		bankSeenThisVisit = true;
+		lastBankUpdate = tickCounter;
 		onContentsChanged();
 	}
 
@@ -437,7 +524,12 @@ public class BankAuditorPlugin extends Plugin
 	{
 		if (event.getGroupId() == InterfaceID.BANKMAIN)
 		{
+			if (visitEnding)
+			{
+				finishBankVisit();
+			}
 			bankOpen = true;
+			bankOpenedTick = tickCounter;
 			reconcileNeeded = true;
 			lastContainerChange = tickCounter;
 		}
@@ -446,25 +538,31 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onWidgetClosed(WidgetClosed event)
 	{
-		if (event.getGroupId() == InterfaceID.BANKMAIN)
+		if (event.getGroupId() == InterfaceID.BANKMAIN && bankOpen)
 		{
-			endBankVisit();
-			saveState(false);
+			// Don't settle the visit yet. The last deposit (a looting bag, say) can still be on its way.
+			bankOpen = false;
+			reconcileNeeded = false;
+			visitEnding = true;
+			visitEndTick = tickCounter;
 		}
 	}
 
-	private void endBankVisit()
+	/**
+	 * Wraps up a bank visit. There is no full reconcile here because the last bank update may never have
+	 * arrived, so only loot that went missing and came back is booked. Losses wait for the next visit.
+	 */
+	private void finishBankVisit()
 	{
-		if (bankOpen || bankSeenThisVisit)
+		visitEnding = false;
+		if (ledger.restoreMissing(ownedTotals()))
 		{
-			// No reconcile here: the last bank update can arrive after the interface closed.
-			// Whatever changed is picked up on the next visit instead.
-			ledger.endBankVisit();
-			ledgerDirty = true;
+			panelDirty = true;
+			clearCaches();
 		}
-		bankOpen = false;
-		bankSeenThisVisit = false;
-		reconcileNeeded = false;
+		ledger.endBankVisit();
+		ledgerDirty = true;
+		saveState(false);
 	}
 
 	@Subscribe
@@ -474,7 +572,13 @@ public class BankAuditorPlugin extends Plugin
 		// Tooltips say "5 min ago", and prices change, so rebuild them now and then
 		clearCaches();
 
-		if (bankOpen && bankSeenThisVisit && reconcileNeeded && tickCounter - lastContainerChange >= QUIET_TICKS)
+		if (visitEnding && (tickCounter - visitEndTick >= VISIT_END_MAX_TICKS
+			|| (tickCounter - visitEndTick >= QUIET_TICKS && tickCounter - lastContainerChange >= QUIET_TICKS)))
+		{
+			finishBankVisit();
+		}
+
+		if (bankOpen && lastBankUpdate >= bankOpenedTick && reconcileNeeded && tickCounter - lastContainerChange >= QUIET_TICKS)
 		{
 			reconcileNeeded = false;
 			if (ledger.reconcile(ownedTotals()))
@@ -502,7 +606,7 @@ public class BankAuditorPlugin extends Plugin
 	}
 
 	/**
-	 * What the player owns right now: bank, inventory and worn items.
+	 * What the player owns right now: bank, inventory, worn items and items in Grand Exchange sell offers.
 	 */
 	private Map<Integer, Long> ownedTotals()
 	{
@@ -513,7 +617,41 @@ public class BankAuditorPlugin extends Plugin
 		}
 		inventoryCounts.forEach((id, qty) -> totals.merge(id, qty, Long::sum));
 		wornCounts.forEach((id, qty) -> totals.merge(id, qty, Long::sum));
+		offerCounts.forEach((id, qty) -> totals.merge(id, qty, Long::sum));
 		return totals;
+	}
+
+	private long ownedTotal(int id)
+	{
+		long bank = bankCounts == null ? 0 : bankCounts.getOrDefault(id, 0L);
+		return bank + inventoryCounts.getOrDefault(id, 0L) + wornCounts.getOrDefault(id, 0L) + offerCounts.getOrDefault(id, 0L);
+	}
+
+	private Map<Integer, Long> countSellOffers()
+	{
+		GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
+		if (offers == null)
+		{
+			return Collections.emptyMap();
+		}
+		Map<Integer, Long> counts = new HashMap<>();
+		for (GrandExchangeOffer offer : offers)
+		{
+			if (offer == null || offer.getItemId() <= 0)
+			{
+				continue;
+			}
+			GrandExchangeOfferState state = offer.getState();
+			if (state == GrandExchangeOfferState.SELLING || state == GrandExchangeOfferState.CANCELLED_SELL)
+			{
+				long unsold = offer.getTotalQuantity() - offer.getQuantitySold();
+				if (unsold > 0)
+				{
+					counts.merge(itemManager.canonicalize(offer.getItemId()), unsold, Long::sum);
+				}
+			}
+		}
+		return counts;
 	}
 
 	private Map<Integer, Long> count(ItemContainer container)
@@ -577,9 +715,10 @@ public class BankAuditorPlugin extends Plugin
 		boolean tradeable = composition.isGeTradeable() && id != ItemID.COINS && id != ItemID.PLATINUM;
 		long bank = bankCounts == null ? 0 : bankCounts.getOrDefault(id, 0L);
 		long owned = bank + inventoryCounts.getOrDefault(id, 0L);
-		long total = owned + wornCounts.getOrDefault(id, 0L);
-		// Worn items count for the ledger but are in use, so they are never shown as loot to sell
-		long looted = Math.min(ledger.estimateLooted(id, total), owned);
+		long offered = offerCounts.getOrDefault(id, 0L);
+		// Worn items and items up for sale count for the ledger, but they are in use or already being sold,
+		// so they are never shown as loot to sell. Items in sell offers are taken out of the loot first.
+		long looted = Math.min(Math.max(0, ledger.estimateLooted(id, ownedTotal(id)) - offered), owned);
 		long price = itemManager.getItemPrice(id);
 		KeepRule rule = keepList.match(name);
 
@@ -853,10 +992,16 @@ public class BankAuditorPlugin extends Plugin
 		}
 		else if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
-			endBankVisit();
+			if (bankOpen || visitEnding)
+			{
+				bankOpen = false;
+				reconcileNeeded = false;
+				finishBankVisit();
+			}
 			saveState(false);
 			inventoryCounts = Collections.emptyMap();
 			wornCounts = Collections.emptyMap();
+			offerCounts = Collections.emptyMap();
 			clearCaches();
 		}
 	}
@@ -870,6 +1015,8 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onClientShutdown(ClientShutdown event)
 	{
+		// ConfigManager writes the config to disk in its own ClientShutdown handler, which runs after this one.
+		// The save has to be done by then, so wait for the client thread here instead of handing it a future.
 		CompletableFuture<Void> saved = new CompletableFuture<>();
 		clientThread.invoke(() ->
 		{
@@ -882,7 +1029,18 @@ public class BankAuditorPlugin extends Plugin
 				saved.complete(null);
 			}
 		});
-		event.waitFor(saved);
+		try
+		{
+			saved.get(SHUTDOWN_SAVE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+		}
+		catch (InterruptedException e)
+		{
+			Thread.currentThread().interrupt();
+		}
+		catch (ExecutionException | TimeoutException e)
+		{
+			log.debug("Bank Auditor state was not saved before shutdown", e);
+		}
 	}
 
 	private void switchProfile(String newProfileKey)
@@ -910,7 +1068,8 @@ public class BankAuditorPlugin extends Plugin
 		historyDirty = pruneHistory(System.currentTimeMillis());
 		bankDirty = false;
 		bankOpen = false;
-		bankSeenThisVisit = false;
+		lastBankUpdate = -1;
+		visitEnding = false;
 		reconcileNeeded = false;
 		clearCaches();
 		panelDirty = true;

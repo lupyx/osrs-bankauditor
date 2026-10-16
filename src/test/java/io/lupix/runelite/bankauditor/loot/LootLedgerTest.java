@@ -224,9 +224,91 @@ public class LootLedgerTest
 		ledger.addLoot(SHARK, 5);
 
 		assertEquals(25, ledger.estimateLooted(SHARK, 125));
-		assertEquals(10, ledger.estimateLooted(SHARK, 10));
+		// Down to 10 from 125: the loot went first, like a reconcile would decide
+		assertEquals(0, ledger.estimateLooted(SHARK, 10));
 		assertEquals(0, ledger.estimateLooted(SHARK, 0));
 		assertEquals(0, ledger.estimateLooted(WHIP, 10));
+	}
+
+	@Test
+	public void estimateDropsAsSoonAsLootIsSold()
+	{
+		// 10,000 of my own death runes plus 2,000 looted, then I sell some at the GE before banking
+		ledger.addLoot(DEATH_RUNE, 2000, 10000L);
+		ledger.reconcile(owned(DEATH_RUNE, 12000));
+
+		assertEquals(2000, ledger.estimateLooted(DEATH_RUNE, 12000));
+		assertEquals(500, ledger.estimateLooted(DEATH_RUNE, 10500));
+		assertEquals(0, ledger.estimateLooted(DEATH_RUNE, 10000));
+		assertEquals(0, ledger.estimateLooted(DEATH_RUNE, 9000));
+	}
+
+	@Test
+	public void estimateIgnoresDropsThatWereNotPickedUp()
+	{
+		ledger.addLoot(DEATH_RUNE, 300, 5000L);
+
+		// Picked up 100 of the 300
+		assertEquals(100, ledger.estimateLooted(DEATH_RUNE, 5100));
+	}
+
+	@Test
+	public void baselineFromTheDropMeansUsedLootIsNotTakenFromMyStack()
+	{
+		// 5000 of my own, 300 dropped, I sold those 300 before banking
+		ledger.addLoot(DEATH_RUNE, 300, 5000L);
+
+		ledger.reconcile(owned(DEATH_RUNE, 5000));
+
+		assertEquals(0, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
+	public void baselineOnlyCountsForItemsTheLedgerHasNotSeen()
+	{
+		ledger.addLoot(DEATH_RUNE, 300, 5000L);
+		ledger.addLoot(DEATH_RUNE, 200, 9999L);
+		ledger.reconcile(owned(DEATH_RUNE, 5500));
+
+		assertEquals(500, ledger.getLooted(DEATH_RUNE));
+
+		ledger.addLoot(DEATH_RUNE, 100, 1L);
+		ledger.reconcile(owned(DEATH_RUNE, 5600));
+
+		assertEquals(600, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
+	public void restoreMissingOnlyGivesBack()
+	{
+		// 51 looted, 50 of them went into the looting bag, so only 1 is seen at first
+		ledger.addLoot(DEATH_RUNE, 51, 1000L);
+		ledger.reconcile(owned(DEATH_RUNE, 1001));
+		assertEquals(1, ledger.getLooted(DEATH_RUNE));
+		assertEquals(50, ledger.getMissing(DEATH_RUNE));
+
+		// Bag emptied into the bank and the bank closed straight away
+		assertTrue(ledger.restoreMissing(owned(DEATH_RUNE, 1051)));
+		ledger.endBankVisit();
+
+		assertEquals(51, ledger.getLooted(DEATH_RUNE));
+		assertEquals(0, ledger.getMissing(DEATH_RUNE));
+
+		// The next full reconcile agrees
+		assertFalse(ledger.reconcile(owned(DEATH_RUNE, 1051)));
+		assertEquals(51, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
+	public void restoreMissingNeverTakesLootAway()
+	{
+		ledger.addLoot(SHARK, 10, 100L);
+		ledger.reconcile(owned(SHARK, 105));
+		assertEquals(5, ledger.getMissing(SHARK));
+
+		assertFalse(ledger.restoreMissing(owned(SHARK, 50)));
+		assertEquals(5, ledger.getLooted(SHARK));
+		assertEquals(5, ledger.getMissing(SHARK));
 	}
 
 	@Test

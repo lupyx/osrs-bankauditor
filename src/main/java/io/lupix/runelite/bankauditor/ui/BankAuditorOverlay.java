@@ -96,9 +96,11 @@ public class BankAuditorOverlay extends WidgetItemOverlay
 			drawHighlight(graphics, widgetItem, bounds);
 		}
 
-		if (place == Place.BANK && config.showLootedAmount() && item.getLooted() > 0)
+		// The looted figure covers the bank and the inventory, but this number is about the stack under it
+		long lootedHere = Math.min(item.getLooted(), widgetItem.getQuantity());
+		if (place == Place.BANK && config.showLootedAmount() && lootedHere > 0)
 		{
-			drawLootedAmount(graphics, bounds, item.getLooted());
+			drawLootedAmount(graphics, bounds, lootedHere);
 		}
 
 		if (config.showTooltips() && isHovered(widgetItem, bounds))
@@ -123,14 +125,20 @@ public class BankAuditorOverlay extends WidgetItemOverlay
 		{
 			case InterfaceID.BANKMAIN:
 				// Only real bank slots, not the potion store or the equipment tab
-				return id == InterfaceID.Bankmain.ITEMS || widget.getParentId() == InterfaceID.Bankmain.ITEMS ? Place.BANK : Place.OTHER;
+				return isIn(widget, InterfaceID.Bankmain.ITEMS) ? Place.BANK : Place.OTHER;
 			case InterfaceID.BANKSIDE:
-				return Place.BANK_INVENTORY;
+				// Only the inventory, not the rune pouch, looting bag or other views that share the side panel
+				return isIn(widget, InterfaceID.Bankside.ITEMS) ? Place.BANK_INVENTORY : Place.OTHER;
 			case InterfaceID.GE_OFFERS_SIDE:
-				return Place.GE_INVENTORY;
+				return isIn(widget, InterfaceID.GeOffersSide.ITEMS) ? Place.GE_INVENTORY : Place.OTHER;
 			default:
 				return Place.OTHER;
 		}
+	}
+
+	private static boolean isIn(Widget widget, int componentId)
+	{
+		return widget.getId() == componentId || widget.getParentId() == componentId;
 	}
 
 	private void drawHighlight(Graphics2D graphics, WidgetItem widgetItem, Rectangle bounds)

@@ -8,6 +8,8 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.GridLayout;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -31,6 +33,10 @@ import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
 public class BankAuditorPanel extends PluginPanel
 {
 	private static final int ROW_GAP = 6;
+	/**
+	 * Rows shown in the sell list. The summary above it still counts everything, and the bank tag shows it all.
+	 */
+	private static final int MAX_SELL_ROWS = 50;
 
 	private final ItemManager itemManager;
 	private final Runnable onClearLoot;
@@ -44,6 +50,7 @@ public class BankAuditorPanel extends PluginPanel
 	private final JPanel lootList = new JPanel();
 	private final JLabel sellSummary = new JLabel();
 	private final JPanel sellList = new JPanel();
+	private List<String> shownSellRows = Collections.emptyList();
 
 	public BankAuditorPanel(ItemManager itemManager, Runnable onClearLoot)
 	{
@@ -183,7 +190,6 @@ public class BankAuditorPanel extends PluginPanel
 	 */
 	public void showSellList(List<ItemSummary> items, boolean bankSeen, boolean tagEnabled)
 	{
-		sellList.removeAll();
 		long total = 0;
 		for (ItemSummary item : items)
 		{
@@ -208,10 +214,31 @@ public class BankAuditorPanel extends PluginPanel
 			sellSummary.setText(html(text));
 		}
 
-		for (ItemSummary item : items)
+		List<ItemSummary> shown = items.subList(0, Math.min(MAX_SELL_ROWS, items.size()));
+		List<String> rows = new ArrayList<>(shown.size() + 1);
+		for (ItemSummary item : shown)
+		{
+			rows.add(item.getId() + ":" + item.getSellable() + ":" + item.getOwned() + ":" + item.getPrice());
+		}
+		rows.add(String.valueOf(items.size()));
+		if (rows.equals(shownSellRows))
+		{
+			// Same rows as last time, so skip rebuilding them and reloading every item image
+			return;
+		}
+		shownSellRows = rows;
+
+		sellList.removeAll();
+		for (ItemSummary item : shown)
 		{
 			sellList.add(sellRow(item));
 			sellList.add(gap());
+		}
+		if (items.size() > shown.size())
+		{
+			JLabel more = new JLabel("and " + (items.size() - shown.size()) + " more");
+			styleSummary(more);
+			sellList.add(more);
 		}
 		sellList.revalidate();
 		sellList.repaint();
@@ -229,7 +256,9 @@ public class BankAuditorPanel extends PluginPanel
 		JLabel source = new JLabel(record.describeSource());
 		source.setFont(FontManager.getRunescapeSmallFont());
 		source.setForeground(Color.WHITE);
-		header.add(source, BorderLayout.WEST);
+		// Centre takes whatever width the time leaves, so long names get cut with "..." instead of overlapping
+		source.setToolTipText(record.describeSource());
+		header.add(source, BorderLayout.CENTER);
 
 		JLabel when = new JLabel(Formats.ago(now, record.getTimestamp()));
 		when.setFont(FontManager.getRunescapeSmallFont());

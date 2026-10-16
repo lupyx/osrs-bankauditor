@@ -56,23 +56,26 @@ Every part can be turned off on its own.
 
 ## How the loot count works
 
-The client only knows your whole bank while it is open, so the plugin settles its numbers then. Loot that drops is noted as pending. The next time the bank is open and nothing has moved for a couple of ticks, it compares what you own (bank, inventory and worn items) with what it saw last time:
+The client only knows your whole bank while it is open, so the plugin settles its numbers then. Loot that drops is noted as pending. The next time the bank is open and nothing has moved for a couple of ticks, it compares what you own (bank, inventory, worn items and items in Grand Exchange sell offers) with what it saw last time:
 
 - If you have less than it expected, the difference comes out of the loot first. That covers loot you never picked up, sold, alched, ate or dropped. Anything above what you had before is treated as loot, so using or selling items eats into the loot before your own supply.
 - If you have more than it expected, the extra is yours (bought, crafted, and so on). The exception is loot that went missing earlier in the same bank visit, like when you empty a looting bag into the bank.
 
-Worn items count as owned for this, but they are in use, so they are never shown as sellable.
+Worn items and items in a sell offer count as owned for this, but they are in use or already being sold, so they are never shown as sellable. An offer you abort keeps its items counted as loot.
+
+Between bank visits the numbers follow the same rule as you go. Sell 500 looted runes at the Grand Exchange and the sellable count drops by 500 straight away, so the highlight never moves on to your own stack.
 
 Data is saved per account in your RuneLite profile.
 
 ## Loot sources
 
-NPC kills and PvP kills are always tracked. Chests, clue caskets, raids, minigames, pickpocketing and the rest come from RuneLite's Loot Tracker plugin, so keep it enabled if you want those too. While the Loot Tracker is on, Bank Auditor reads everything from it so nothing gets counted twice.
+NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets, raids, minigames and the rest come from RuneLite's Loot Tracker plugin, so keep it enabled if you want those too. While the Loot Tracker is on, Bank Auditor reads everything from it so nothing gets counted twice. Kills in Last Man Standing and Soul Wars are skipped, like the Loot Tracker does.
 
 ## Known limits
 
 - Potion storage, the rune pouch, the looting bag (outside the bank visit where you empty it) and the group storage of group ironmen are not part of the bank as far as the client is concerned, so loot that goes there looks used up.
-- The first time an item is looted the plugin has no earlier count for it, so it assumes the whole drop is still there at the next bank visit.
+- For kills, the plugin remembers what you owned when the drop happened. Chest, clue and other rewards often land straight in your inventory, so the first time an item comes from one of those (or before you have opened your bank once) the plugin assumes the whole reward is still there at the next bank visit.
+- The keep list editor in the config page does not refresh by itself. If it is open while you use the Keep menu option, close and reopen it before typing in it, or your edit will undo the menu change.
 - The `sellable` bank tag is a Bank Tags search, so it needs the Bank Tags plugin (on by default). It does not work in the Grand Exchange item search.
 - Area names come from the table RuneLite uses for Discord status. Places it does not know show up as a region id.
 
