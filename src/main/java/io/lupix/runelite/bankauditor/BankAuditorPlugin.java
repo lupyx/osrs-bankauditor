@@ -60,11 +60,13 @@ import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.VarClientIntChanged;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
@@ -221,12 +223,27 @@ public class BankAuditorPlugin extends Plugin
 	private int lastContainerChange;
 	private boolean visitEnding;
 	private int visitEndTick;
-	/**
-	 * Client ticks ({@link Client#getTickCount()}) of the last click that moves items in or out of the bank and of
-	 * the last bank update. See {@link #checkBankCloseRace()}.
+	/*
+	 * Bank clicks that the server may not have answered yet, for when the bank is closed in the same moment.
+	 * Ticks here are client ticks (Client#getTickCount), which stay the same from one GameTick until after the next.
+	 * See checkBankCloseRace and finishBankVisit.
 	 */
-	private int lastBankActionTick = -2;
 	private int bankUpdateTick = -2;
+	private int bankClosedTick = -2;
+	/**
+	 * A withdraw or deposit between the bank and the inventory or worn items.
+	 */
+	private boolean bankActionPending;
+	private int bankActionTick = -2;
+	/**
+	 * Withdraw-X or Deposit-X was clicked and the amount prompt is still open.
+	 */
+	private boolean amountPromptOpen;
+	/**
+	 * Emptying something the client can't see into, like the looting bag or a herb sack, straight into the bank.
+	 */
+	private boolean hiddenDepositPending;
+	private int hiddenDepositTick = -2;
 
 	private boolean ledgerDirty;
 	private boolean historyDirty;
@@ -544,12 +561,45 @@ public class BankAuditorPlugin extends Plugin
 		String option = Text.removeTags(event.getMenuOption());
 		int group = WidgetUtil.componentToInterface(event.getParam1());
 		boolean bankWidget = group == InterfaceID.BANKMAIN || group == InterfaceID.BANKSIDE;
-		// Deposit buttons also live on other interfaces opened from the bank, such as the looting bag
-		if (option.startsWith("Deposit")
-			|| (bankWidget && (option.startsWith("Withdraw") || option.startsWith("Empty"))))
+		if ((bankWidget && option.startsWith("Empty")) || (!bankWidget && option.startsWith("Deposit")))
 		{
-			lastBankActionTick = client.getTickCount();
+			// Emptying a sack, or depositing from the looting bag view, moves items the client can't see
+			hiddenDepositPending = true;
+			hiddenDepositTick = client.getTickCount();
 		}
+		else if (bankWidget && (option.startsWith("Withdraw") || option.startsWith("Deposit")))
+		{
+			if (option.endsWith("-X"))
+			{
+				// Nothing moves until the amount is entered
+				amountPromptOpen = true;
+			}
+			else
+			{
+				bankActionPending = true;
+				bankActionTick = client.getTickCount();
+			}
+		}
+	}
+
+	@Subscribe
+	public void onVarClientIntChanged(VarClientIntChanged event)
+	{
+		if (amountPromptOpen && event.getIndex() == VarClientID.MESLAYERMODE
+			&& client.getVarcIntValue(VarClientID.MESLAYERMODE) == 0)
+		{
+			// The amount prompt closed, either with an amount or cancelled
+			amountPromptOpen = false;
+			bankActionPending = true;
+			bankActionTick = client.getTickCount();
+		}
+	}
+
+	private void resetBankActions()
+	{
+		bankActionPending = false;
+		amountPromptOpen = false;
+		hiddenDepositPending = false;
 	}
 
 	private void onBankContainer(ItemContainer bank)
@@ -559,23 +609,29 @@ public class BankAuditorPlugin extends Plugin
 		bankDirty = true;
 		lastBankUpdate = tickCounter;
 		bankUpdateTick = client.getTickCount();
+		// Whatever was clicked before has been answered now
+		bankActionPending = false;
+		hiddenDepositPending = false;
 		onContentsChanged();
 	}
 
 	/**
 	 * Runs at the end of every client tick, once that tick's container updates are in. A withdraw or deposit
 	 * changes the bank and the inventory in the same tick, but when the bank is closed in the same moment, the
-	 * server only sends the inventory. So when the inventory or worn items change right after a bank click, with
-	 * the bank closed and no bank update alongside, the bank snapshot gets the opposite change.
+	 * server only sends the inventory. So when the inventory or worn items change right after a bank click that
+	 * got no bank update, with the bank closed, the bank snapshot gets the opposite change.
 	 */
 	private void checkBankCloseRace()
 	{
 		int tick = client.getTickCount();
 		boolean carriedChanged = inventoryTick == tick || wornTick == tick;
-		if (!carriedChanged || bankOpen || bankCounts == null || bankUpdateTick == tick || lastBankActionTick < tick - 1)
+		if (!carriedChanged || !bankActionPending || bankOpen || bankCounts == null || bankUpdateTick == tick
+			|| bankActionTick < tick - 1)
 		{
 			return;
 		}
+		// One click, one correction. Later changes are eating, teleports and so on.
+		bankActionPending = false;
 
 		Map<Integer, Long> before = new HashMap<>(inventoryTick == tick ? inventoryBeforeTick : inventoryCounts);
 		(wornTick == tick ? wornBeforeTick : wornCounts).forEach((id, qty) -> before.merge(id, qty, Long::sum));
@@ -640,6 +696,7 @@ public class BankAuditorPlugin extends Plugin
 		{
 			// Don't settle the visit yet. The last deposit (a looting bag, say) can still be on its way.
 			bankOpen = false;
+			bankClosedTick = client.getTickCount();
 			reconcileNeeded = false;
 			visitEnding = true;
 			visitEndTick = tickCounter;
@@ -653,12 +710,25 @@ public class BankAuditorPlugin extends Plugin
 	private void finishBankVisit()
 	{
 		visitEnding = false;
-		if (ledger.restoreMissing(ownedTotals()))
+		amountPromptOpen = false;
+		boolean hiddenDepositLost = hiddenDepositPending && hiddenDepositTick >= bankClosedTick - 1;
+		hiddenDepositPending = false;
+		if (hiddenDepositLost)
 		{
-			panelDirty = true;
-			clearCaches();
+			// A looting bag or sack was emptied into the bank right as it closed, and the bank update never came.
+			// The loot that went missing this visit is probably in there, so keep it open until the bank is seen
+			// again, and don't trust the snapshot until then.
+			bankTrusted = false;
 		}
-		ledger.endBankVisit();
+		else
+		{
+			if (ledger.restoreMissing(ownedTotals()))
+			{
+				panelDirty = true;
+				clearCaches();
+			}
+			ledger.endBankVisit();
+		}
 		ledgerDirty = true;
 		saveState(false);
 	}
@@ -747,6 +817,8 @@ public class BankAuditorPlugin extends Plugin
 		inventoryTick = -1;
 		wornTick = -1;
 		offerCounts = Collections.emptyMap();
+		// The first containers after logging in are not a bank transfer
+		resetBankActions();
 	}
 
 	/**
@@ -1199,6 +1271,7 @@ public class BankAuditorPlugin extends Plugin
 		historyDirty = pruneHistory(System.currentTimeMillis());
 		bankDirty = false;
 		bankTrusted = false;
+		resetBankActions();
 		bankOpen = false;
 		lastBankUpdate = -1;
 		visitEnding = false;

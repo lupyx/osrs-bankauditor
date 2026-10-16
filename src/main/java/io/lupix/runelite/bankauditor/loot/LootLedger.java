@@ -148,11 +148,8 @@ public final class LootLedger
 			long owned = Math.max(0, baseline);
 			if (e.lastTotal == null)
 			{
-				// With earlier loot still pending, the baseline may already include it, so leave this to the reconcile
-				if (e.looted == 0 && e.pending == 0)
-				{
-					e.lastTotal = owned;
-				}
+				// Earlier loot of a new item comes from chests, clues and the like, which go straight to the inventory
+				e.lastTotal = Math.max(0, owned - e.looted - e.pending);
 			}
 			else if (owned - e.lastTotal - e.pending > 0)
 			{

@@ -75,7 +75,7 @@ NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets,
 
 - Potion storage, the rune pouch, the looting bag (outside the bank visit where you empty it) and the group storage of group ironmen are not part of the bank as far as the client is concerned, so loot that goes there looks used up.
 - For kills, the plugin remembers what you owned when the drop happened. Chest, clue and other rewards often land straight in your inventory, so the first time an item comes from one of those (or before you have opened your bank since logging in) the plugin assumes the whole reward is still there at the next bank visit.
-- If you close the bank at the same moment as a withdraw or deposit, the client never receives the new bank contents. The plugin works out the change from your inventory instead.
+- If you close the bank at the same moment as a withdraw or deposit, the client never receives the new bank contents. The plugin works out the change from your inventory instead. If it was a looting bag or a sack you emptied into the bank, it waits for your next bank visit.
 - Items you collect from the Grand Exchange straight to your bank, or put in through a deposit box, aren't seen until you next open the bank.
 - The keep list editor in the config page does not refresh by itself. If it is open while you use the Keep menu option, close and reopen it before typing in it, or your edit will undo the menu change.
 - The `sellable` bank tag is a Bank Tags search, so it needs the Bank Tags plugin (on by default). It does not work in the Grand Exchange item search.

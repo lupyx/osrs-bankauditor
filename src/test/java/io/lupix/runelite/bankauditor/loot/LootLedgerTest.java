@@ -306,6 +306,16 @@ public class LootLedgerTest
 	}
 
 	@Test
+	public void dropLeftOnTheFloorAfterEarlierLootIsNotMadeUpFromMyItems()
+	{
+		ledger.addLoot(DEATH_RUNE, 300);
+		ledger.addLoot(DEATH_RUNE, 200, 5300L);
+		ledger.reconcile(owned(DEATH_RUNE, 5300));
+
+		assertEquals(300, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
 	public void baselineThatIsTooLowDoesNotTurnMyItemsIntoLoot()
 	{
 		ledger.addLoot(DEATH_RUNE, 1, 5000L);
