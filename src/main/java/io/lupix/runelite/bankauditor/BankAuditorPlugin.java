@@ -13,6 +13,7 @@ import io.lupix.runelite.bankauditor.loot.LootStateCodec;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.sell.KeepList;
 import io.lupix.runelite.bankauditor.sell.KeepRule;
+import io.lupix.runelite.bankauditor.sell.SellOffers;
 import io.lupix.runelite.bankauditor.sell.SellableCalculator;
 import io.lupix.runelite.bankauditor.ui.BankAuditorOverlay;
 import io.lupix.runelite.bankauditor.ui.BankAuditorPanel;
@@ -59,12 +60,14 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -180,8 +183,22 @@ public class BankAuditorPlugin extends Plugin
 	 * Canonical item id to quantity as of the last time the bank was open. Null until the bank has been seen.
 	 */
 	private Map<Integer, Long> bankCounts;
+	/**
+	 * True once the bank has been seen this login and nothing since could have changed it unseen.
+	 * A snapshot from an earlier session can miss deposits made on another device.
+	 */
+	private boolean bankTrusted;
 	private Map<Integer, Long> inventoryCounts = Collections.emptyMap();
 	private Map<Integer, Long> wornCounts = Collections.emptyMap();
+	/**
+	 * Inventory and worn items as they were before their first change in the current client tick.
+	 * Some loot lands in the inventory in the same tick it is announced, and the baseline must not include it.
+	 */
+	private Map<Integer, Long> inventoryBeforeTick = Collections.emptyMap();
+	private Map<Integer, Long> wornBeforeTick = Collections.emptyMap();
+	private int inventoryTick = -1;
+	private int wornTick = -1;
+	private final SellOffers sellOffers = new SellOffers();
 	/**
 	 * Items sitting in Grand Exchange sell offers, or waiting in the collection box after an aborted sale.
 	 * They are still owned, and they are the first thing that stops counting as sellable.
@@ -206,6 +223,13 @@ public class BankAuditorPlugin extends Plugin
 	private int lastContainerChange;
 	private boolean visitEnding;
 	private int visitEndTick;
+	/**
+	 * Order of the last click that moves items in or out of the bank, and of the last bank update. When the click
+	 * is newer, the bank closed before the server sent the result, so the bank snapshot is out of date.
+	 */
+	private int bankEventSeq;
+	private int lastBankAction;
+	private int lastBankUpdateSeq;
 
 	private boolean ledgerDirty;
 	private boolean historyDirty;
@@ -258,7 +282,6 @@ public class BankAuditorPlugin extends Plugin
 				switchProfile(configManager.getRSProfileKey());
 				inventoryCounts = count(client.getItemContainer(InventoryID.INV));
 				wornCounts = count(client.getItemContainer(InventoryID.WORN));
-				offerCounts = countSellOffers();
 				ItemContainer bank = client.getItemContainer(InventoryID.BANK);
 				if (bank != null)
 				{
@@ -268,6 +291,15 @@ public class BankAuditorPlugin extends Plugin
 					reconcileNeeded = true;
 					onBankContainer(bank);
 				}
+				GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
+				if (offers != null)
+				{
+					for (int slot = 0; slot < offers.length; slot++)
+					{
+						updateSellOffer(slot, offers[slot]);
+					}
+				}
+				onContentsChanged();
 			}
 		});
 	}
@@ -285,9 +317,8 @@ public class BankAuditorPlugin extends Plugin
 			ledger = new LootLedger();
 			history = new LootHistory();
 			bankCounts = null;
-			inventoryCounts = Collections.emptyMap();
-			wornCounts = Collections.emptyMap();
-			offerCounts = Collections.emptyMap();
+			bankTrusted = false;
+			clearCarriedCounts();
 			profileKey = null;
 			bankOpen = false;
 			lastBankUpdate = -1;
@@ -399,15 +430,16 @@ public class BankAuditorPlugin extends Plugin
 			return;
 		}
 
-		// Kills drop their loot on the floor, so what the player owns right now is what they had before the drop.
-		// Chests, clues and pickpocketing often put the items straight in the inventory, so there is no such moment.
+		// Kills drop their loot on the floor, so what the player owned at the start of this tick is what they had
+		// before the drop. Chests, clues and pickpocketing can hand out items over several ticks, so there is
+		// no such moment for them.
 		boolean groundDrop = type == LootSourceType.NPC || type == LootSourceType.PLAYER;
 		List<LootItem> items = new ArrayList<>(quantities.size());
 		for (Map.Entry<Integer, Long> e : quantities.entrySet())
 		{
 			int id = e.getKey();
 			items.add(new LootItem(id, itemManager.getItemComposition(id).getMembersName(), e.getValue(), itemManager.getItemPrice(id)));
-			ledger.addLoot(id, e.getValue(), groundDrop && bankCounts != null ? ownedTotal(id) : null);
+			ledger.addLoot(id, e.getValue(), groundDrop && bankTrusted ? ownedBeforeThisTick(id) : null);
 		}
 
 		long now = System.currentTimeMillis();
@@ -483,11 +515,23 @@ public class BankAuditorPlugin extends Plugin
 		}
 		else if (id == InventoryID.INV)
 		{
+			int tick = client.getTickCount();
+			if (tick != inventoryTick)
+			{
+				inventoryBeforeTick = inventoryCounts;
+				inventoryTick = tick;
+			}
 			inventoryCounts = count(event.getItemContainer());
 			onContentsChanged();
 		}
 		else if (id == InventoryID.WORN)
 		{
+			int tick = client.getTickCount();
+			if (tick != wornTick)
+			{
+				wornBeforeTick = wornCounts;
+				wornTick = tick;
+			}
 			wornCounts = count(event.getItemContainer());
 			onContentsChanged();
 		}
@@ -496,20 +540,61 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onGrandExchangeOfferChanged(GrandExchangeOfferChanged event)
 	{
-		offerCounts = countSellOffers();
+		updateSellOffer(event.getSlot(), event.getOffer());
 		onContentsChanged();
+	}
+
+	private void updateSellOffer(int slot, GrandExchangeOffer offer)
+	{
+		if (offer == null || offer.getItemId() <= 0)
+		{
+			sellOffers.update(slot, -1, SellOffers.Kind.OTHER, 0, 0, 0);
+			return;
+		}
+		GrandExchangeOfferState state = offer.getState();
+		SellOffers.Kind kind = state == GrandExchangeOfferState.SELLING ? SellOffers.Kind.SELLING
+			: state == GrandExchangeOfferState.CANCELLED_SELL ? SellOffers.Kind.CANCELLED
+			: SellOffers.Kind.OTHER;
+		int id = itemManager.canonicalize(offer.getItemId());
+		sellOffers.update(slot, id, kind, offer.getTotalQuantity(), offer.getQuantitySold(), heldOutsideGe(id));
+	}
+
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked event)
+	{
+		if (!bankOpen || event.getMenuOption() == null)
+		{
+			return;
+		}
+		String option = Text.removeTags(event.getMenuOption());
+		int group = WidgetUtil.componentToInterface(event.getParam1());
+		boolean bankWidget = group == InterfaceID.BANKMAIN || group == InterfaceID.BANKSIDE;
+		// Deposit buttons also live on other interfaces opened from the bank, such as the looting bag
+		if (option.startsWith("Deposit")
+			|| (bankWidget && (option.startsWith("Withdraw") || option.startsWith("Empty"))))
+		{
+			lastBankAction = ++bankEventSeq;
+		}
 	}
 
 	private void onBankContainer(ItemContainer bank)
 	{
 		bankCounts = count(bank);
+		bankTrusted = true;
 		bankDirty = true;
 		lastBankUpdate = tickCounter;
+		lastBankUpdateSeq = ++bankEventSeq;
 		onContentsChanged();
+	}
+
+	private boolean bankUpdatePending()
+	{
+		return lastBankAction > lastBankUpdateSeq;
 	}
 
 	private void onContentsChanged()
 	{
+		offerCounts = sellOffers.counts(this::heldOutsideGe);
 		lastContainerChange = tickCounter;
 		if (bankOpen)
 		{
@@ -555,12 +640,21 @@ public class BankAuditorPlugin extends Plugin
 	private void finishBankVisit()
 	{
 		visitEnding = false;
-		if (ledger.restoreMissing(ownedTotals()))
+		if (bankUpdatePending())
 		{
-			panelDirty = true;
-			clearCaches();
+			// The bank closed before the server sent the result of the last withdraw or deposit. The snapshot is
+			// out of date, so don't book anything from it. Missing loot stays open until the next visit.
+			bankTrusted = false;
 		}
-		ledger.endBankVisit();
+		else
+		{
+			if (ledger.restoreMissing(ownedTotals()))
+			{
+				panelDirty = true;
+				clearCaches();
+			}
+			ledger.endBankVisit();
+		}
 		ledgerDirty = true;
 		saveState(false);
 	}
@@ -578,7 +672,8 @@ public class BankAuditorPlugin extends Plugin
 			finishBankVisit();
 		}
 
-		if (bankOpen && lastBankUpdate >= bankOpenedTick && reconcileNeeded && tickCounter - lastContainerChange >= QUIET_TICKS)
+		if (bankOpen && lastBankUpdate >= bankOpenedTick && !bankUpdatePending() && reconcileNeeded
+			&& tickCounter - lastContainerChange >= QUIET_TICKS)
 		{
 			reconcileNeeded = false;
 			if (ledger.reconcile(ownedTotals()))
@@ -623,35 +718,40 @@ public class BankAuditorPlugin extends Plugin
 
 	private long ownedTotal(int id)
 	{
-		long bank = bankCounts == null ? 0 : bankCounts.getOrDefault(id, 0L);
-		return bank + inventoryCounts.getOrDefault(id, 0L) + wornCounts.getOrDefault(id, 0L) + offerCounts.getOrDefault(id, 0L);
+		return heldOutsideGe(id) + offerCounts.getOrDefault(id, 0L);
 	}
 
-	private Map<Integer, Long> countSellOffers()
+	/**
+	 * Bank, inventory and worn items, without the Grand Exchange.
+	 */
+	private long heldOutsideGe(int id)
 	{
-		GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
-		if (offers == null)
-		{
-			return Collections.emptyMap();
-		}
-		Map<Integer, Long> counts = new HashMap<>();
-		for (GrandExchangeOffer offer : offers)
-		{
-			if (offer == null || offer.getItemId() <= 0)
-			{
-				continue;
-			}
-			GrandExchangeOfferState state = offer.getState();
-			if (state == GrandExchangeOfferState.SELLING || state == GrandExchangeOfferState.CANCELLED_SELL)
-			{
-				long unsold = offer.getTotalQuantity() - offer.getQuantitySold();
-				if (unsold > 0)
-				{
-					counts.merge(itemManager.canonicalize(offer.getItemId()), unsold, Long::sum);
-				}
-			}
-		}
-		return counts;
+		long bank = bankCounts == null ? 0 : bankCounts.getOrDefault(id, 0L);
+		return bank + inventoryCounts.getOrDefault(id, 0L) + wornCounts.getOrDefault(id, 0L);
+	}
+
+	/**
+	 * What the player owned of an item before anything changed in the current tick.
+	 */
+	private long ownedBeforeThisTick(int id)
+	{
+		int tick = client.getTickCount();
+		Map<Integer, Long> inventory = inventoryTick == tick ? inventoryBeforeTick : inventoryCounts;
+		Map<Integer, Long> worn = wornTick == tick ? wornBeforeTick : wornCounts;
+		long bank = bankCounts == null ? 0 : bankCounts.getOrDefault(id, 0L);
+		return bank + inventory.getOrDefault(id, 0L) + worn.getOrDefault(id, 0L) + offerCounts.getOrDefault(id, 0L);
+	}
+
+	private void clearCarriedCounts()
+	{
+		inventoryCounts = Collections.emptyMap();
+		wornCounts = Collections.emptyMap();
+		inventoryBeforeTick = Collections.emptyMap();
+		wornBeforeTick = Collections.emptyMap();
+		inventoryTick = -1;
+		wornTick = -1;
+		sellOffers.clear();
+		offerCounts = Collections.emptyMap();
 	}
 
 	private Map<Integer, Long> count(ItemContainer container)
@@ -999,9 +1099,8 @@ public class BankAuditorPlugin extends Plugin
 				finishBankVisit();
 			}
 			saveState(false);
-			inventoryCounts = Collections.emptyMap();
-			wornCounts = Collections.emptyMap();
-			offerCounts = Collections.emptyMap();
+			bankTrusted = false;
+			clearCarriedCounts();
 			clearCaches();
 		}
 	}
@@ -1022,6 +1121,12 @@ public class BankAuditorPlugin extends Plugin
 		{
 			try
 			{
+				if (bankOpen || visitEnding)
+				{
+					bankOpen = false;
+					reconcileNeeded = false;
+					finishBankVisit();
+				}
 				saveState(false);
 			}
 			finally
@@ -1067,6 +1172,7 @@ public class BankAuditorPlugin extends Plugin
 		ledgerDirty = false;
 		historyDirty = pruneHistory(System.currentTimeMillis());
 		bankDirty = false;
+		bankTrusted = false;
 		bankOpen = false;
 		lastBankUpdate = -1;
 		visitEnding = false;

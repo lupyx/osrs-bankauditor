@@ -128,8 +128,11 @@ public final class LootLedger
 
 	/**
 	 * Books loot that just dropped, with what the player owned of the item right before the drop.
-	 * The baseline is only used when the ledger knows nothing about the item yet. Without it, the first
-	 * reconcile has to assume the whole drop is still there.
+	 * Without a baseline, the first reconcile of a new item has to assume the whole drop is still there,
+	 * and anything bought since the last reconcile can be mistaken for loot that was never picked up.
+	 *
+	 * <p>The baseline only ever moves what the player owns into their own share. It never takes loot away,
+	 * because part of it comes from a bank snapshot that can miss deposits made elsewhere.
 	 *
 	 * @param baseline quantity owned just before the drop, or null when unknown
 	 */
@@ -140,9 +143,18 @@ public final class LootLedger
 			return;
 		}
 		Entry e = entries.computeIfAbsent(itemId, k -> new Entry());
-		if (e.lastTotal == null && baseline != null && e.isEmpty())
+		if (baseline != null && e.missing == 0)
 		{
-			e.lastTotal = Math.max(0, baseline);
+			long owned = Math.max(0, baseline);
+			if (e.lastTotal == null || (e.looted == 0 && e.pending == 0))
+			{
+				e.lastTotal = owned;
+			}
+			else if (owned - e.lastTotal - e.pending > 0)
+			{
+				// Gained some since the last reconcile (bought, crafted, made), which is the player's own
+				e.lastTotal = owned - e.pending;
+			}
 		}
 		e.pending += quantity;
 	}

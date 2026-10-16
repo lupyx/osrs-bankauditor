@@ -264,18 +264,46 @@ public class LootLedgerTest
 	}
 
 	@Test
-	public void baselineOnlyCountsForItemsTheLedgerHasNotSeen()
+	public void baselineNeverTakesLootAway()
 	{
 		ledger.addLoot(DEATH_RUNE, 300, 5000L);
-		ledger.addLoot(DEATH_RUNE, 200, 9999L);
-		ledger.reconcile(owned(DEATH_RUNE, 5500));
+		ledger.reconcile(owned(DEATH_RUNE, 5300));
+		assertEquals(300, ledger.getLooted(DEATH_RUNE));
+
+		// A baseline that is too low (a deposit the plugin didn't see) leaves the loot alone
+		ledger.addLoot(DEATH_RUNE, 100, 1L);
+		ledger.reconcile(owned(DEATH_RUNE, 5400));
+
+		assertEquals(400, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
+	public void itemsBoughtBeforeADropAreMine()
+	{
+		// Settled at 9,999 of my own, then I buy 4,901 more, then a kill drops 200 that I leave on the floor
+		ledger.addLoot(DEATH_RUNE, 1, 9999L);
+		ledger.reconcile(owned(DEATH_RUNE, 9999));
+		ledger.endBankVisit();
+		assertEquals(0, ledger.getLooted(DEATH_RUNE));
+
+		ledger.addLoot(DEATH_RUNE, 200, 14900L);
+
+		assertEquals(0, ledger.estimateLooted(DEATH_RUNE, 14900));
+		ledger.reconcile(owned(DEATH_RUNE, 14900));
+		assertEquals(0, ledger.getLooted(DEATH_RUNE));
+	}
+
+	@Test
+	public void gainsBeforeADropAreMineEvenWithLootAlreadyThere()
+	{
+		ledger.addLoot(DEATH_RUNE, 300, 5000L);
+		ledger.reconcile(owned(DEATH_RUNE, 5300));
+
+		// Bought 1,000, then a drop of 200 that I pick up
+		ledger.addLoot(DEATH_RUNE, 200, 6300L);
+		ledger.reconcile(owned(DEATH_RUNE, 6500));
 
 		assertEquals(500, ledger.getLooted(DEATH_RUNE));
-
-		ledger.addLoot(DEATH_RUNE, 100, 1L);
-		ledger.reconcile(owned(DEATH_RUNE, 5600));
-
-		assertEquals(600, ledger.getLooted(DEATH_RUNE));
 	}
 
 	@Test
