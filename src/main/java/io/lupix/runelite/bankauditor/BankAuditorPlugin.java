@@ -650,14 +650,11 @@ public class BankAuditorPlugin extends Plugin
 		bankTrusted = true;
 		bankDirty = true;
 		lastBankUpdate = tickCounter;
-		int tick = client.getTickCount();
-		bankUpdateTick = tick;
-		// Clicks from earlier ticks have been answered now. A click from this tick may have come too late for it.
-		pendingBankClicks.values().removeIf(clickTick -> clickTick < tick);
-		if (hiddenDepositTick < tick)
-		{
-			hiddenDepositPending = false;
-		}
+		bankUpdateTick = client.getTickCount();
+		// A bank update answers the clicks before it. The server normally answers a click within the same client
+		// tick count, so there is no telling a late click apart from an answered one.
+		pendingBankClicks.clear();
+		hiddenDepositPending = false;
 		onContentsChanged();
 	}
 
@@ -768,6 +765,12 @@ public class BankAuditorPlugin extends Plugin
 		amountPromptItem = null;
 		boolean hiddenDepositLost = hiddenDepositPending && hiddenDepositTick >= bankClosedTick - 1 && bankCounts != null;
 		hiddenDepositPending = false;
+		// Only ever gives loot back, so it is safe even when the snapshot is behind
+		if (ledger.restoreMissing(ownedTotals()))
+		{
+			panelDirty = true;
+			clearCaches();
+		}
 		if (hiddenDepositLost)
 		{
 			// A looting bag or sack was emptied into the bank right as it closed, and the bank update never came.
@@ -777,11 +780,6 @@ public class BankAuditorPlugin extends Plugin
 		}
 		else
 		{
-			if (ledger.restoreMissing(ownedTotals()))
-			{
-				panelDirty = true;
-				clearCaches();
-			}
 			ledger.endBankVisit();
 		}
 		ledgerDirty = true;
