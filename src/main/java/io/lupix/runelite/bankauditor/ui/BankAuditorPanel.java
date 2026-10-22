@@ -85,6 +85,10 @@ public class BankAuditorPanel extends PluginPanel
 	private static final ImageIcon GE_OFF_ICON = blankIcon();
 	private static final ImageIcon HA_ICON = blankIcon();
 	private static final ImageIcon HA_OFF_ICON = blankIcon();
+	private static final int TOTAL_ICON_SIZE = 16;
+	private static final int TOTAL_COLUMN_WIDTH = 62;
+	private static final ImageIcon GE_TOTAL_ICON = blankIcon(TOTAL_ICON_SIZE);
+	private static final ImageIcon HA_TOTAL_ICON = blankIcon(TOTAL_ICON_SIZE);
 	private static final int MODE_BUTTON_SIZE = 20;
 	private static final int SEARCH_DELAY_MILLIS = 250;
 	private static final int ITEM_ICON_WIDTH = 36;
@@ -670,8 +674,8 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * A box with a header (source icon, title, the line under it, time and total worth) over a table of
-	 * items with their icons and values, and a footer with the GE and HA totals.
+	 * A box with a header (source icon, title, the line under it and time) over a table of items with
+	 * their icons and values, and a footer with the GE and HA totals.
 	 *
 	 * @param key stays the same across refreshes, to remember whether the box was expanded
 	 */
@@ -680,6 +684,7 @@ public class BankAuditorPanel extends PluginPanel
 	{
 		long geTotal = 0;
 		long haTotal = 0;
+		// What the box is worth picks its value color: the better of GE and HA for each item
 		long worth = 0;
 		for (LootGroups.Line line : lines)
 		{
@@ -735,15 +740,7 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		text.add(top);
 
-		JPanel bottom = new JPanel(new BorderLayout(4, 0));
-		bottom.setOpaque(false);
-		bottom.add(subtitle != null ? subtitle : new JLabel(), BorderLayout.CENTER);
-		JLabel worthLabel = new JLabel(Formats.compact(worth) + " gp");
-		worthLabel.setFont(FontManager.getRunescapeBoldFont());
-		worthLabel.setForeground(worthColor != null ? worthColor : ColorScheme.GRAND_EXCHANGE_PRICE);
-		worthLabel.setToolTipText("Best of GE and HA per item");
-		bottom.add(worthLabel, BorderLayout.EAST);
-		text.add(bottom);
+		text.add(subtitle != null ? subtitle : new JLabel());
 		header.add(text, BorderLayout.CENTER);
 		box.add(header, BorderLayout.NORTH);
 
@@ -776,7 +773,7 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * The footer: how many items, and the GE and HA totals lined up with the value column above.
+	 * The footer: how many items, and the GE and HA totals in a bigger font than the item values.
 	 */
 	private JPanel totalsRow(int count, long geTotal, long haTotal)
 	{
@@ -784,20 +781,16 @@ public class BankAuditorPanel extends PluginPanel
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setBorder(BorderFactory.createCompoundBorder(
 			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.DARK_GRAY_COLOR),
-			new EmptyBorder(3, 6, 3, 6)));
-		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
+			new EmptyBorder(4, 6, 4, 6)));
 		row.add(smallLabel(count == 1 ? "1 item" : count + " items", ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
 
-		JPanel values = new JPanel(new GridLayout(2, 1));
+		JPanel values = new JPanel(new GridLayout(2, 1, 0, 2));
 		values.setOpaque(false);
-		values.setPreferredSize(new Dimension(VALUE_COLUMN_WIDTH, 28));
-		JLabel ge = valueLabel(GE_ICON, Formats.compact(geTotal), ColorScheme.GRAND_EXCHANGE_PRICE);
-		ge.setToolTipText("GE total");
-		values.add(ge);
-		JLabel ha = valueLabel(HA_ICON, Formats.compact(haTotal), ColorScheme.GRAND_EXCHANGE_ALCH);
-		ha.setToolTipText("HA total");
-		values.add(ha);
+		values.add(totalLabel(GE_TOTAL_ICON, geTotal, ColorScheme.GRAND_EXCHANGE_PRICE, "GE total"));
+		values.add(totalLabel(HA_TOTAL_ICON, haTotal, ColorScheme.GRAND_EXCHANGE_ALCH, "HA total"));
+		values.setPreferredSize(new Dimension(TOTAL_COLUMN_WIDTH, values.getPreferredSize().height));
 		row.add(values, BorderLayout.EAST);
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		return row;
 	}
 
@@ -964,6 +957,18 @@ public class BankAuditorPanel extends PluginPanel
 		return label;
 	}
 
+	private static JLabel totalLabel(ImageIcon icon, long total, Color color, String tooltip)
+	{
+		JLabel label = new JLabel(Formats.compact(total));
+		label.setFont(FontManager.getRunescapeBoldFont());
+		label.setForeground(color);
+		label.setIcon(icon);
+		label.setIconTextGap(4);
+		label.setHorizontalAlignment(SwingConstants.LEFT);
+		label.setToolTipText(tooltip);
+		return label;
+	}
+
 	/**
 	 * The coin and high alchemy icons are shared by every value label, so they are drawn into once they
 	 * load and every label picks them up on its next paint.
@@ -971,12 +976,12 @@ public class BankAuditorPanel extends PluginPanel
 	private void loadValueIcons()
 	{
 		AsyncBufferedImage coins = itemManager.getImage(ItemID.COINS_10000);
-		coins.onLoaded(() -> SwingUtilities.invokeLater(() -> fillValueIcons(coins, GE_ICON, GE_OFF_ICON)));
+		coins.onLoaded(() -> SwingUtilities.invokeLater(() -> fillValueIcons(coins, GE_ICON, GE_OFF_ICON, GE_TOTAL_ICON)));
 		spriteManager.getSpriteAsync(SpriteID.Magicon.HIGH_LEVEL_ALCHEMY, 0,
-			image -> SwingUtilities.invokeLater(() -> fillValueIcons(image, HA_ICON, HA_OFF_ICON)));
+			image -> SwingUtilities.invokeLater(() -> fillValueIcons(image, HA_ICON, HA_OFF_ICON, HA_TOTAL_ICON)));
 	}
 
-	private void fillValueIcons(BufferedImage source, ImageIcon icon, ImageIcon off)
+	private void fillValueIcons(BufferedImage source, ImageIcon icon, ImageIcon off, ImageIcon total)
 	{
 		if (source == null)
 		{
@@ -985,22 +990,29 @@ public class BankAuditorPanel extends PluginPanel
 		BufferedImage scaled = ImageUtil.resizeImage(source, VALUE_ICON_SIZE, VALUE_ICON_SIZE, true);
 		draw(scaled, icon);
 		draw(ImageUtil.alphaOffset(ImageUtil.grayscaleImage(scaled), 0.5f), off);
+		draw(ImageUtil.resizeImage(source, TOTAL_ICON_SIZE, TOTAL_ICON_SIZE, true), total);
 		repaint();
 	}
 
 	private static void draw(BufferedImage image, ImageIcon into)
 	{
-		Graphics2D g = (Graphics2D) ((BufferedImage) into.getImage()).getGraphics();
+		BufferedImage target = (BufferedImage) into.getImage();
+		Graphics2D g = (Graphics2D) target.getGraphics();
 		g.setComposite(AlphaComposite.Src);
-		int x = (VALUE_ICON_SIZE - image.getWidth()) / 2;
-		int y = (VALUE_ICON_SIZE - image.getHeight()) / 2;
+		int x = (target.getWidth() - image.getWidth()) / 2;
+		int y = (target.getHeight() - image.getHeight()) / 2;
 		g.drawImage(image, x, y, null);
 		g.dispose();
 	}
 
 	private static ImageIcon blankIcon()
 	{
-		return new ImageIcon(new BufferedImage(VALUE_ICON_SIZE, VALUE_ICON_SIZE, BufferedImage.TYPE_INT_ARGB));
+		return blankIcon(VALUE_ICON_SIZE);
+	}
+
+	private static ImageIcon blankIcon(int size)
+	{
+		return new ImageIcon(new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB));
 	}
 
 	/**
