@@ -50,7 +50,7 @@ public class LootGroupsTest
 			drop(3, "Cow", LUMBRIDGE, 330, bones(1)),
 			drop(4, "Goblin", LUMBRIDGE, 302, runes(5, 180)));
 
-		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.LOCATION, ZONE);
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.LOCATION, LootGroups.Interval.DAY, ZONE);
 
 		assertEquals(2, groups.size());
 		LootGroups.Group lumbridge = groups.get(0);
@@ -74,7 +74,7 @@ public class LootGroupsTest
 			drop(1, "Goblin", 1, 301, bones(1)),
 			drop(2, "Goblin", 0, 0, bones(1)));
 
-		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.LOCATION, ZONE);
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.LOCATION, LootGroups.Interval.DAY, ZONE);
 
 		assertEquals("Region 1", groups.get(0).getTitle());
 		assertEquals("Unknown location", groups.get(1).getTitle());
@@ -91,7 +91,7 @@ public class LootGroupsTest
 			drop(5, "Goblin", ZULRAH, 301, bones(1)),
 			drop(6, "Zulrah", ZULRAH, 301, runes(50, 200)));
 
-		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.SOURCE, ZONE);
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, ZONE);
 
 		assertEquals(2, groups.size());
 		assertEquals("Goblin", groups.get(0).getTitle());
@@ -112,24 +112,80 @@ public class LootGroupsTest
 			drop(24 * 3, "Goblin", LUMBRIDGE, 301, bones(4)),
 			drop(24 * 365, "Goblin", LUMBRIDGE, 301, bones(5)));
 
-		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.DAY, ZONE);
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.DAY, ZONE);
 
 		assertEquals(4, groups.size());
-		assertEquals("Today", LootGroups.dayTitle(groups.get(0).getTitle(), NOW, ZONE));
+		assertEquals("Today", title(groups.get(0), LootGroups.Interval.DAY));
 		assertEquals("2 drops from Goblin", groups.get(0).getDetail());
 		assertEquals(4, groups.get(0).getLines().get(0).getQuantity());
-		assertEquals("Yesterday", LootGroups.dayTitle(groups.get(1).getTitle(), NOW, ZONE));
-		assertEquals("Monday 19 October", LootGroups.dayTitle(groups.get(2).getTitle(), NOW, ZONE));
-		assertEquals("Wednesday 22 October 2025", LootGroups.dayTitle(groups.get(3).getTitle(), NOW, ZONE));
+		assertEquals("Yesterday", title(groups.get(1), LootGroups.Interval.DAY));
+		assertEquals("Monday 19 October", title(groups.get(2), LootGroups.Interval.DAY));
+		assertEquals("Wednesday 22 October 2025", title(groups.get(3), LootGroups.Interval.DAY));
+	}
+
+	private static String title(LootGroups.Group group, LootGroups.Interval interval)
+	{
+		return LootGroups.periodTitle(group.getTitle(), interval, NOW, ZONE);
+	}
+
+	@Test
+	public void hoursWeeksAndMonths()
+	{
+		List<LootRecord> records = Arrays.asList(
+			drop(1, "Goblin", LUMBRIDGE, 301, bones(1)),
+			drop(2, "Goblin", LUMBRIDGE, 301, bones(1)),
+			drop(24 + 1, "Goblin", LUMBRIDGE, 301, bones(1)),
+			drop(24 * 10, "Goblin", LUMBRIDGE, 301, bones(1)),
+			drop(24 * 60, "Goblin", LUMBRIDGE, 301, bones(1)));
+
+		List<LootGroups.Group> hours = LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.HOUR, ZONE);
+		assertEquals("Today 17:00", title(hours.get(0), LootGroups.Interval.HOUR));
+		assertEquals("Today 16:00", title(hours.get(1), LootGroups.Interval.HOUR));
+		assertEquals("Yesterday 17:00", title(hours.get(2), LootGroups.Interval.HOUR));
+		assertEquals("Mon 12 Oct 18:00", title(hours.get(3), LootGroups.Interval.HOUR));
+
+		// Thursday 22 October, so this week started on Monday the 19th
+		List<LootGroups.Group> weeks = LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.WEEK, ZONE);
+		assertEquals(3, weeks.size());
+		assertEquals("This week", title(weeks.get(0), LootGroups.Interval.WEEK));
+		assertEquals("3 drops from Goblin", weeks.get(0).getDetail());
+		assertEquals("Last week", title(weeks.get(1), LootGroups.Interval.WEEK));
+		assertEquals("Week of 17 August", title(weeks.get(2), LootGroups.Interval.WEEK));
+
+		List<LootGroups.Group> months = LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.MONTH, ZONE);
+		assertEquals(2, months.size());
+		assertEquals("This month", title(months.get(0), LootGroups.Interval.MONTH));
+		assertEquals("August", title(months.get(1), LootGroups.Interval.MONTH));
+	}
+
+	@Test
+	public void alchedItemsGetTheirOwnLineWorthTheGold()
+	{
+		List<LootRecord> records = Arrays.asList(
+			drop(1, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 10, 200, 2, 3, 120)));
+
+		LootGroups.Group group = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, ZONE).get(0);
+
+		List<LootGroups.Line> lines = group.getLines();
+		assertEquals(3, lines.size());
+		assertEquals(LootGroups.Line.Kind.KEPT, lines.get(0).getKind());
+		assertEquals(5, lines.get(0).getQuantity());
+		assertEquals(LootGroups.Line.Kind.ALCHED, lines.get(1).getKind());
+		assertEquals(3 * 120, lines.get(1).getValue());
+		assertEquals(LootGroups.Line.Kind.LEFT, lines.get(2).getKind());
+		assertEquals(5 * 200 + 3 * 120, group.getTotalValue());
 	}
 
 	@Test
 	public void savedModeNames()
 	{
+		assertEquals(LootGroups.Mode.TIME, LootGroups.Mode.fromName("DAY"));
+		assertEquals(LootGroups.Interval.WEEK, LootGroups.Interval.fromName("WEEK"));
+		assertEquals(LootGroups.Interval.DAY, LootGroups.Interval.fromName(null));
 		assertEquals(LootGroups.Mode.SOURCE, LootGroups.Mode.fromName("SOURCE"));
 		assertEquals(LootGroups.Mode.DEFAULT, LootGroups.Mode.fromName("something old"));
 		assertEquals(LootGroups.Mode.DEFAULT, LootGroups.Mode.fromName(null));
-		assertEquals(Collections.emptyList(), LootGroups.group(Collections.emptyList(), LootGroups.Mode.DAY, ZONE));
+		assertEquals(Collections.emptyList(), LootGroups.group(Collections.emptyList(), LootGroups.Mode.TIME, LootGroups.Interval.DAY, ZONE));
 	}
 
 	@Test
@@ -139,7 +195,7 @@ public class LootGroupsTest
 			drop(1, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 10, 200, 4)),
 			drop(2, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 5, 200, 0)));
 
-		LootGroups.Group group = LootGroups.group(records, LootGroups.Mode.SOURCE, ZONE).get(0);
+		LootGroups.Group group = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, ZONE).get(0);
 
 		assertEquals(2, group.getLines().size());
 		assertEquals(11, group.getLines().get(0).getQuantity());

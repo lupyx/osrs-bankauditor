@@ -135,6 +135,10 @@ public class BankAuditorPlugin extends Plugin
 	 * After the bank closes, how long to wait for late container updates before the visit is wrapped up.
 	 */
 	private static final int VISIT_END_MAX_TICKS = 5;
+	/**
+	 * How long after the click an alch can land. The spell itself takes a few ticks.
+	 */
+	private static final int ALCH_WAIT_TICKS = 5;
 	private static final int SAVE_INTERVAL_TICKS = 50;
 	private static final int PANEL_REFRESH_TICKS = 3;
 	private static final int PANEL_CLOCK_TICKS = 100;
@@ -205,6 +209,11 @@ public class BankAuditorPlugin extends Plugin
 	private LootHistory history = new LootHistory();
 	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
 	private final GroundLootTracker groundLoot = new GroundLootTracker();
+	/**
+	 * Item a High Level Alchemy cast was clicked on, or -1.
+	 */
+	private int pendingAlchItem = -1;
+	private int pendingAlchTick;
 	/**
 	 * Canonical item id to quantity as of the last time the bank was open. Null until the bank has been seen.
 	 */
@@ -565,7 +574,9 @@ public class BankAuditorPlugin extends Plugin
 				inventoryBeforeTick = inventoryCounts;
 				inventoryTick = tick;
 			}
+			Map<Integer, Long> before = inventoryCounts;
 			inventoryCounts = count(event.getItemContainer());
+			checkAlch(before, inventoryCounts, tick);
 			onContentsChanged();
 		}
 		else if (id == InventoryID.WORN)
@@ -662,10 +673,66 @@ public class BankAuditorPlugin extends Plugin
 		groundLoot.takeClicked(itemManager.canonicalize(event.getId()), tilePoint(tiles[plane][x][y]));
 	}
 
+	/**
+	 * A High Level Alchemy cast was clicked on an item. The cast lands a tick or so later.
+	 */
+	private void alchClicked(MenuOptionClicked event)
+	{
+		if (event.getItemId() <= 0 || event.getMenuOption() == null || event.getMenuTarget() == null
+			|| !"Cast".equals(Text.removeTags(event.getMenuOption()))
+			|| !Text.removeTags(event.getMenuTarget()).startsWith("High Level Alchemy ->"))
+		{
+			return;
+		}
+		pendingAlchItem = itemManager.canonicalize(event.getItemId());
+		pendingAlchTick = client.getTickCount();
+	}
+
+	/**
+	 * Confirms a clicked alch once the item leaves the inventory and gold comes in, and marks it on the
+	 * newest drop that still holds that item. Items that were never loot are left alone.
+	 */
+	private void checkAlch(Map<Integer, Long> before, Map<Integer, Long> after, int tick)
+	{
+		if (pendingAlchItem < 0)
+		{
+			return;
+		}
+		if (tick - pendingAlchTick > ALCH_WAIT_TICKS)
+		{
+			pendingAlchItem = -1;
+			return;
+		}
+		int item = pendingAlchItem;
+		long used = before.getOrDefault(item, 0L) - after.getOrDefault(item, 0L);
+		long gold = after.getOrDefault(ItemValue.COINS, 0L) - before.getOrDefault(ItemValue.COINS, 0L);
+		if (used != 1 || gold <= 0)
+		{
+			return;
+		}
+		pendingAlchItem = -1;
+		if (ledger.getLooted(item) + ledger.getPending(item) <= 0)
+		{
+			return;
+		}
+		LootRecord record = history.newestHolding(item);
+		if (record == null)
+		{
+			return;
+		}
+		LootRecord updated = record.withAlched(item, 1, gold);
+		history.replace(record, updated);
+		groundLoot.replace(record, updated);
+		historyDirty = true;
+		panelDirty = true;
+		clearCaches();
+	}
+
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
 		groundItemClicked(event);
+		alchClicked(event);
 		if (!bankOpen || event.getMenuOption() == null)
 		{
 			return;
@@ -1220,7 +1287,8 @@ public class BankAuditorPlugin extends Plugin
 			return;
 		}
 		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, spriteManager, sourceIcons(), () -> clientThread.invokeLater(this::clearLootData),
-			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()));
+			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()),
+			LootGroups.Interval.fromName(config.lootTimeRange()), i -> config.setLootTimeRange(i.name()));
 		newPanel.setOnActivate(() -> clientThread.invokeLater(this::refreshPanel));
 		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		navButton = NavigationButton.builder()
@@ -1339,6 +1407,7 @@ public class BankAuditorPlugin extends Plugin
 		switch (event.getKey())
 		{
 			case "lootGrouping":
+			case "lootTimeRange":
 				// Only the panel reads it, and the panel is what changed it
 				return;
 			case "keepList":

@@ -24,6 +24,16 @@ public final class LootItem
 	 */
 	@SerializedName("u")
 	private final long left;
+	/**
+	 * How many were turned into gold with High Level Alchemy.
+	 */
+	@SerializedName("a")
+	private final long alched;
+	/**
+	 * Gold one cast gave for this item.
+	 */
+	@SerializedName("h")
+	private final long alchPrice;
 
 	public LootItem(int id, String name, long quantity, long price)
 	{
@@ -32,11 +42,18 @@ public final class LootItem
 
 	public LootItem(int id, String name, long quantity, long price, long left)
 	{
+		this(id, name, quantity, price, left, 0, 0);
+	}
+
+	public LootItem(int id, String name, long quantity, long price, long left, long alched, long alchPrice)
+	{
 		this.id = id;
 		this.name = name;
 		this.quantity = quantity;
 		this.price = price;
 		this.left = Math.max(0, Math.min(quantity, left));
+		this.alched = Math.max(0, Math.min(quantity - this.left, alched));
+		this.alchPrice = alchPrice;
 	}
 
 	public int getId()
@@ -73,11 +90,24 @@ public final class LootItem
 	}
 
 	/**
-	 * How many were actually picked up, or are still on the floor waiting.
+	 * How many of these were high alched.
+	 */
+	public long getAlched()
+	{
+		return Math.max(0, Math.min(quantity - getLeft(), alched));
+	}
+
+	public long getAlchPrice()
+	{
+		return alchPrice;
+	}
+
+	/**
+	 * How many are still items: picked up (or still on the floor) and not alched.
 	 */
 	public long getKept()
 	{
-		return quantity - getLeft();
+		return quantity - getLeft() - getAlched();
 	}
 
 	/**
@@ -85,7 +115,15 @@ public final class LootItem
 	 */
 	public LootItem withMoreLeft(long more)
 	{
-		return new LootItem(id, name, quantity, price, getLeft() + more);
+		return new LootItem(id, name, quantity, price, getLeft() + more, getAlched(), alchPrice);
+	}
+
+	/**
+	 * A copy with {@code more} added to the amount alched, each for {@code gold}.
+	 */
+	public LootItem withMoreAlched(long more, long gold)
+	{
+		return new LootItem(id, name, quantity, price, getLeft(), getAlched() + more, gold);
 	}
 
 	@Override
@@ -101,13 +139,13 @@ public final class LootItem
 		}
 		LootItem other = (LootItem) o;
 		return id == other.id && quantity == other.quantity && price == other.price && getLeft() == other.getLeft()
-			&& Objects.equals(name, other.name);
+			&& getAlched() == other.getAlched() && alchPrice == other.alchPrice && Objects.equals(name, other.name);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(id, name, quantity, price, getLeft());
+		return Objects.hash(id, name, quantity, price, getLeft(), getAlched(), alchPrice);
 	}
 
 	@Override

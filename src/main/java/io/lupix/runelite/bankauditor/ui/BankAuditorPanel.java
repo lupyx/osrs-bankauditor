@@ -23,6 +23,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
@@ -103,7 +104,11 @@ public class BankAuditorPanel extends PluginPanel
 	private final Set<String> expanded = new HashSet<>();
 	private final Runnable onClearLoot;
 	private final Consumer<LootGroups.Mode> onModeChange;
+	private final Consumer<LootGroups.Interval> onIntervalChange;
 	private LootGroups.Mode mode;
+	private LootGroups.Interval interval;
+	private JPanel intervalRow;
+	private final Map<LootGroups.Interval, JLabel> intervalChips = new EnumMap<>(LootGroups.Interval.class);
 	private LootGroups.Mode hoveredMode;
 	private final Map<LootGroups.Mode, JLabel> modeButtons = new EnumMap<>(LootGroups.Mode.class);
 	private List<LootRecord> lootRecords = Collections.emptyList();
@@ -134,7 +139,8 @@ public class BankAuditorPanel extends PluginPanel
 	 * @param onModeChange told when the user picks another loot view, so it can be remembered
 	 */
 	public BankAuditorPanel(ItemManager itemManager, SpriteManager spriteManager, SourceIcons icons, Runnable onClearLoot,
-		LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange)
+		LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange,
+		LootGroups.Interval interval, Consumer<LootGroups.Interval> onIntervalChange)
 	{
 		this.itemManager = itemManager;
 		this.spriteManager = spriteManager;
@@ -142,6 +148,8 @@ public class BankAuditorPanel extends PluginPanel
 		this.onClearLoot = onClearLoot;
 		this.mode = mode;
 		this.onModeChange = onModeChange;
+		this.interval = interval;
+		this.onIntervalChange = onIntervalChange;
 
 		setLayout(new BorderLayout());
 		setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -213,6 +221,8 @@ public class BankAuditorPanel extends PluginPanel
 		top.add(buildFilterRow());
 		top.add(Box.createVerticalStrut(ROW_GAP));
 		top.add(summaryRow);
+		intervalRow = buildIntervalRow();
+		top.add(intervalRow);
 		view.add(top, BorderLayout.NORTH);
 
 		lootList.setLayout(new BoxLayout(lootList, BoxLayout.Y_AXIS));
@@ -371,6 +381,7 @@ public class BankAuditorPanel extends PluginPanel
 						mode = m;
 						styleModeButtons();
 						onModeChange.accept(m);
+						intervalRow.setVisible(m == LootGroups.Mode.TIME);
 						renderLoot();
 					}
 				}
@@ -397,6 +408,57 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		styleModeButtons();
 		return row;
+	}
+
+	/**
+	 * Chips for how much time each box covers, only shown in the time range view.
+	 */
+	private JPanel buildIntervalRow()
+	{
+		JPanel row = new JPanel(new GridLayout(1, LootGroups.Interval.values().length, 3, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
+		for (LootGroups.Interval i : LootGroups.Interval.values())
+		{
+			JLabel chip = smallLabel(i.getLabel(), Color.WHITE);
+			chip.setHorizontalAlignment(SwingConstants.CENTER);
+			chip.setOpaque(true);
+			chip.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			chip.setToolTipText("One box per " + i.getLabel().toLowerCase(Locale.ENGLISH));
+			chip.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					if (SwingUtilities.isLeftMouseButton(e) && interval != i)
+					{
+						interval = i;
+						styleIntervalChips();
+						onIntervalChange.accept(i);
+						renderLoot();
+					}
+				}
+			});
+			intervalChips.put(i, chip);
+			row.add(chip);
+		}
+		styleIntervalChips();
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+		row.setVisible(mode == LootGroups.Mode.TIME);
+		return row;
+	}
+
+	private void styleIntervalChips()
+	{
+		for (Map.Entry<LootGroups.Interval, JLabel> entry : intervalChips.entrySet())
+		{
+			boolean on = entry.getKey() == interval;
+			JLabel chip = entry.getValue();
+			chip.setForeground(on ? Color.WHITE : ColorScheme.LIGHT_GRAY_COLOR);
+			chip.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createLineBorder(on ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_HOVER_COLOR),
+				new EmptyBorder(1, 5, 1, 5)));
+		}
 	}
 
 	private void styleModeButtons()
@@ -490,8 +552,9 @@ public class BankAuditorPanel extends PluginPanel
 		else
 		{
 			ZoneId zone = ZoneId.systemDefault();
-			List<LootGroups.Group> groups = LootGroups.group(records, mode, zone);
-			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source" : "day";
+			List<LootGroups.Group> groups = LootGroups.group(records, mode, interval, zone);
+			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source"
+				: interval.getLabel().toLowerCase(Locale.ENGLISH);
 			String count = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s");
 			String drops = Formats.commas(totalCount) + matching + (totalCount == 1 ? " drop" : " drops");
 			if (groups.size() > MAX_GROUPS)
@@ -504,7 +567,7 @@ public class BankAuditorPanel extends PluginPanel
 			}
 			for (LootGroups.Group group : groups.subList(0, Math.min(MAX_GROUPS, groups.size())))
 			{
-				String title = mode == LootGroups.Mode.DAY ? LootGroups.dayTitle(group.getTitle(), lootNow, zone) : group.getTitle();
+				String title = mode == LootGroups.Mode.TIME ? LootGroups.periodTitle(group.getTitle(), interval, lootNow, zone) : group.getTitle();
 				lootList.add(groupBox(group, title));
 				lootList.add(gap());
 			}
@@ -592,7 +655,7 @@ public class BankAuditorPanel extends PluginPanel
 		// The title is also where an area named after the boss shows, like Vorkath at Vorkath
 		String key = "drop:" + record.getTimestamp() + ":" + record.getSource();
 		return dropBox(key, record.describeSource(), matchSource || matchLocation, icons.spriteFor(record.getSource(), record.getType()),
-			Formats.ago(now, record.getTimestamp()), where, lines, record.getTotalValue());
+			Formats.ago(now, record.getTimestamp()), where, lines);
 	}
 
 	private JPanel groupBox(LootGroups.Group group, String title)
@@ -600,25 +663,46 @@ public class BankAuditorPanel extends PluginPanel
 		JLabel detail = smallLabel(group.getDetail(), ColorScheme.LIGHT_GRAY_COLOR);
 		highlight(detail, group.getDetail(), matchSource || matchLocation);
 		detail.setToolTipText(group.getDetail());
-		String when = mode == LootGroups.Mode.DAY ? null : Formats.ago(lootNow, group.getNewest());
+		String when = mode == LootGroups.Mode.TIME ? null : Formats.ago(lootNow, group.getNewest());
 		boolean titleSearched = mode == LootGroups.Mode.LOCATION ? matchLocation : mode == LootGroups.Mode.SOURCE && matchSource;
 		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
-			group.getLines(), group.getTotalValue());
+			group.getLines());
 	}
 
 	/**
-	 * A box with a header (source icon, title, the line under it, time and totals) over a table of items
-	 * with their icons and values.
+	 * A box with a header (source icon, title, the line under it, time and total worth) over a table of
+	 * items with their icons and values, and a footer with the GE and HA totals.
 	 *
 	 * @param key stays the same across refreshes, to remember whether the box was expanded
 	 */
 	private JPanel dropBox(String key, String title, boolean titleSearched, int sprite, String when, JLabel subtitle,
-		List<LootGroups.Line> lines, long totalValue)
+		List<LootGroups.Line> lines)
 	{
+		long geTotal = 0;
+		long haTotal = 0;
+		long worth = 0;
+		for (LootGroups.Line line : lines)
+		{
+			if (line.isLeft())
+			{
+				continue;
+			}
+			if (line.isAlched())
+			{
+				geTotal += line.getValue();
+				haTotal += line.getValue();
+				worth += line.getValue();
+				continue;
+			}
+			long ha = ItemValue.haValue(line.getId(), line.getQuantity(), itemValues.get(line.getId()));
+			geTotal += line.getValue();
+			haTotal += ha;
+			worth += Math.max(line.getValue(), ha);
+		}
+		Color worthColor = tiers.colorFor(worth);
+
 		JPanel box = new JPanel(new BorderLayout());
 		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		Color totalColor = tiers.colorFor(totalValue);
-		box.setBorder(BorderFactory.createMatteBorder(0, 2, 0, 0, totalColor != null ? totalColor : ColorScheme.DARKER_GRAY_HOVER_COLOR));
 
 		// The header is taller, brighter and bold, with a line under it, so it never reads as another item row
 		JPanel header = new JPanel(new BorderLayout(6, 0));
@@ -651,31 +735,14 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		text.add(top);
 
-		long haTotal = 0;
-		boolean anyLeft = false;
-		for (LootGroups.Line line : lines)
-		{
-			if (line.isLeft())
-			{
-				anyLeft = true;
-				continue;
-			}
-			haTotal += ItemValue.haValue(line.getId(), line.getQuantity(), itemValues.get(line.getId()));
-		}
-		String notLeft = anyLeft ? ", not counting what was left on the floor" : "";
 		JPanel bottom = new JPanel(new BorderLayout(4, 0));
 		bottom.setOpaque(false);
 		bottom.add(subtitle != null ? subtitle : new JLabel(), BorderLayout.CENTER);
-		JPanel totals = new JPanel(new GridLayout(1, 2, 4, 0));
-		totals.setOpaque(false);
-		JLabel geTotal = valueLabel(GE_ICON, Formats.compact(totalValue), totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
-		String count = lines.size() == 1 ? "the 1 item" : "all " + lines.size() + " items";
-		geTotal.setToolTipText("Grand Exchange value of " + count + ": " + Formats.commas(totalValue) + " gp" + notLeft);
-		totals.add(geTotal);
-		JLabel haTotalLabel = valueLabel(HA_ICON, Formats.compact(haTotal), ColorScheme.GRAND_EXCHANGE_ALCH);
-		haTotalLabel.setToolTipText("High alchemy value of " + count + ": " + Formats.commas(haTotal) + " gp" + notLeft);
-		totals.add(haTotalLabel);
-		bottom.add(totals, BorderLayout.EAST);
+		JLabel worthLabel = new JLabel(Formats.compact(worth) + " gp");
+		worthLabel.setFont(FontManager.getRunescapeBoldFont());
+		worthLabel.setForeground(worthColor != null ? worthColor : ColorScheme.GRAND_EXCHANGE_PRICE);
+		worthLabel.setToolTipText("Best of GE and HA per item");
+		bottom.add(worthLabel, BorderLayout.EAST);
 		text.add(bottom);
 		header.add(text, BorderLayout.CENTER);
 		box.add(header, BorderLayout.NORTH);
@@ -683,6 +750,8 @@ public class BankAuditorPanel extends PluginPanel
 		JPanel items = new JPanel();
 		items.setLayout(new BoxLayout(items, BoxLayout.Y_AXIS));
 		items.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		// The value color runs down the items only, so the header stays clean
+		items.setBorder(BorderFactory.createMatteBorder(0, 2, 0, 0, worthColor != null ? worthColor : ColorScheme.DARKER_GRAY_COLOR));
 		if (matchItem && !query.isEmpty())
 		{
 			// Matching items go first so a long combined box never hides them under "and N more"
@@ -701,9 +770,35 @@ public class BankAuditorPanel extends PluginPanel
 			items.add(expandRow(key, open ? "Show fewer items"
 				: "Show " + more + (more == 1 ? " more item" : " more items")));
 		}
-
+		items.add(totalsRow(lines.size(), geTotal, haTotal));
 		box.add(items, BorderLayout.CENTER);
 		return box;
+	}
+
+	/**
+	 * The footer: how many items, and the GE and HA totals lined up with the value column above.
+	 */
+	private JPanel totalsRow(int count, long geTotal, long haTotal)
+	{
+		JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		row.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.DARK_GRAY_COLOR),
+			new EmptyBorder(3, 6, 3, 6)));
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
+		row.add(smallLabel(count == 1 ? "1 item" : count + " items", ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
+
+		JPanel values = new JPanel(new GridLayout(2, 1));
+		values.setOpaque(false);
+		values.setPreferredSize(new Dimension(VALUE_COLUMN_WIDTH, 28));
+		JLabel ge = valueLabel(GE_ICON, Formats.compact(geTotal), ColorScheme.GRAND_EXCHANGE_PRICE);
+		ge.setToolTipText("GE total");
+		values.add(ge);
+		JLabel ha = valueLabel(HA_ICON, Formats.compact(haTotal), ColorScheme.GRAND_EXCHANGE_ALCH);
+		ha.setToolTipText("HA total");
+		values.add(ha);
+		row.add(values, BorderLayout.EAST);
+		return row;
 	}
 
 	/**
@@ -751,14 +846,19 @@ public class BankAuditorPanel extends PluginPanel
 
 	/**
 	 * One table row: the item icon with its quantity, the name, and a column with the stack's Grand Exchange
-	 * and high alchemy values. The name is colored by value tier.
+	 * and high alchemy values. The name is colored by value tier. Alched items show the gold they gave, and
+	 * items left on the floor are grayed out.
 	 */
 	private JPanel itemRow(LootGroups.Line line, boolean odd)
 	{
 		Color background = odd ? ROW_ALT_COLOR : ColorScheme.DARKER_GRAY_COLOR;
 		boolean left = line.isLeft();
-		Color tier = left ? null : tiers.colorFor(line.getValue());
+		boolean alched = line.isAlched();
+		Color tier = left || alched ? null : tiers.colorFor(line.getValue());
 		ItemValue value = itemValues.get(line.getId());
+		String note = left ? "Not picked up"
+			: alched ? "High alched for " + Formats.compact(line.getAlchPrice()) + (line.getQuantity() > 1 ? " each" : "")
+			: null;
 
 		JPanel row = new JPanel(new BorderLayout(6, 0));
 		row.setBackground(background);
@@ -769,27 +869,22 @@ public class BankAuditorPanel extends PluginPanel
 		icon.setPreferredSize(new Dimension(ITEM_ICON_WIDTH, ITEM_ICON_HEIGHT));
 		int quantity = (int) Math.min(Integer.MAX_VALUE, line.getQuantity());
 		itemManager.getImage(line.getId(), quantity, line.getQuantity() > 1).addTo(icon);
+		icon.setToolTipText(note);
 		row.add(icon, BorderLayout.WEST);
 
+		Color nameColor = left ? ColorScheme.MEDIUM_GRAY_COLOR : alched ? ColorScheme.GRAND_EXCHANGE_ALCH
+			: tier != null ? tier : Color.WHITE;
 		JPanel text = new JPanel(new GridLayout(2, 1));
 		text.setOpaque(false);
-		JLabel name = smallLabel(line.getName(), left ? ColorScheme.MEDIUM_GRAY_COLOR : tier != null ? tier : Color.WHITE);
+		JLabel name = smallLabel(line.getName(), nameColor);
 		highlight(name, line.getName(), matchItem);
-		name.setToolTipText(left ? "Not picked up" : line.getName());
+		name.setToolTipText(note != null ? note : line.getName());
 		text.add(name);
-		JLabel amount = smallLabel("x " + Formats.commas(line.getQuantity()) + (left ? ", not picked up" : ""),
-			left ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
-		if (left)
-		{
-			amount.setToolTipText("Not picked up");
-		}
-		text.add(amount);
+		String amount = "x " + Formats.commas(line.getQuantity()) + (left ? " not picked up" : alched ? " high alched" : "");
+		JLabel amountLabel = smallLabel(amount, left ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
+		amountLabel.setToolTipText(note);
+		text.add(amountLabel);
 		row.add(text, BorderLayout.CENTER);
-		if (left)
-		{
-			row.setToolTipText("Not picked up");
-			icon.setToolTipText("Not picked up");
-		}
 
 		// Coins are already gold, so their amount says it all
 		if (line.getId() != ItemValue.COINS)
@@ -797,19 +892,30 @@ public class BankAuditorPanel extends PluginPanel
 			JPanel values = new JPanel(new GridLayout(2, 1));
 			values.setOpaque(false);
 			values.setPreferredSize(new Dimension(VALUE_COLUMN_WIDTH, ITEM_ICON_HEIGHT));
-			JLabel ge = geValue(line, value, tier);
-			JLabel ha = haValue(line, value);
-			if (left)
+			if (alched)
 			{
-				ge.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
-				ha.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
-				ge.setToolTipText("Not picked up. " + ge.getToolTipText());
-				ha.setToolTipText("Not picked up. " + ha.getToolTipText());
+				JLabel gold = valueLabel(HA_ICON, Formats.compact(line.getValue()), ColorScheme.GRAND_EXCHANGE_ALCH);
+				gold.setToolTipText(note);
+				values.add(gold);
+				values.add(new JLabel());
 			}
-			values.add(ge);
-			values.add(ha);
+			else
+			{
+				JLabel ge = geValue(line, value, tier);
+				JLabel ha = haValue(line, value);
+				if (left)
+				{
+					ge.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+					ha.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+					ge.setToolTipText(note);
+					ha.setToolTipText(note);
+				}
+				values.add(ge);
+				values.add(ha);
+			}
 			row.add(values, BorderLayout.EAST);
 		}
+		row.setToolTipText(note);
 		return row;
 	}
 
@@ -822,9 +928,7 @@ public class BankAuditorPanel extends PluginPanel
 			return label;
 		}
 		JLabel label = valueLabel(GE_ICON, Formats.compact(line.getValue()), tier != null ? tier : ColorScheme.GRAND_EXCHANGE_PRICE);
-		long each = line.getQuantity() > 0 ? line.getValue() / line.getQuantity() : 0;
-		label.setToolTipText("Grand Exchange value: " + Formats.commas(line.getValue()) + " gp"
-			+ (line.getQuantity() > 1 ? " (" + Formats.commas(each) + " each)" : "") + ", at the price when it was looted");
+		label.setToolTipText(priceTip("GE", line.getValue(), line.getQuantity()));
 		return label;
 	}
 
@@ -838,9 +942,17 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		long total = ItemValue.haValue(line.getId(), line.getQuantity(), value);
 		JLabel label = valueLabel(HA_ICON, Formats.compact(total), ColorScheme.GRAND_EXCHANGE_ALCH);
-		label.setToolTipText("High alchemy value: " + Formats.commas(total) + " gp"
-			+ (line.getQuantity() > 1 ? " (" + Formats.commas(value.getHaPrice()) + " each)" : ""));
+		label.setToolTipText(priceTip("HA", total, line.getQuantity()));
 		return label;
+	}
+
+	/**
+	 * "GE 39K", or "GE 39K (19K each)" for a stack.
+	 */
+	private static String priceTip(String kind, long total, long quantity)
+	{
+		String tip = kind + " " + Formats.compact(total);
+		return quantity > 1 ? tip + " (" + Formats.compact(total / quantity) + " each)" : tip;
 	}
 
 	private static JLabel valueLabel(ImageIcon icon, String text, Color color)
