@@ -24,21 +24,38 @@ public final class LootGroups
 {
 	public enum Mode
 	{
-		DEFAULT("Default"),
-		LOCATION("Location"),
-		SOURCE("NPC"),
-		DAY("Day");
+		DEFAULT("Default", "view_list.png", "Every drop on its own, newest first"),
+		LOCATION("Location", "view_location.png", "Combine drops from the same area, across all worlds"),
+		SOURCE("Source", "view_source.png", "Combine drops from the same NPC or source"),
+		DAY("Day", "view_day.png", "One box per day");
 
 		private final String label;
+		private final String icon;
+		private final String description;
 
-		Mode(String label)
+		Mode(String label, String icon, String description)
 		{
 			this.label = label;
+			this.icon = icon;
+			this.description = description;
 		}
 
 		public String getLabel()
 		{
 			return label;
+		}
+
+		/**
+		 * Resource path of the view button's icon.
+		 */
+		public String getIcon()
+		{
+			return "/io/lupix/runelite/bankauditor/" + icon;
+		}
+
+		public String getDescription()
+		{
+			return description;
 		}
 
 		/**

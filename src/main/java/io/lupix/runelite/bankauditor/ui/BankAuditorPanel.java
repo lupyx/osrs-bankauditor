@@ -8,11 +8,14 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.GridLayout;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +61,7 @@ public class BankAuditorPanel extends PluginPanel
 	 */
 	private static final int MAX_GROUP_LINES = 15;
 	private static final int SOURCE_ICON_SIZE = 20;
+	private static final int MODE_BUTTON_SIZE = 20;
 	private static final int ITEM_ICON_WIDTH = 36;
 	private static final int ITEM_ICON_HEIGHT = 32;
 	private static final Color ROW_ALT_COLOR = new Color(35, 35, 35);
@@ -71,6 +75,8 @@ public class BankAuditorPanel extends PluginPanel
 	private final Runnable onClearLoot;
 	private final Consumer<LootGroups.Mode> onModeChange;
 	private LootGroups.Mode mode;
+	private LootGroups.Mode hoveredMode;
+	private final Map<LootGroups.Mode, JLabel> modeButtons = new EnumMap<>(LootGroups.Mode.class);
 	private List<LootRecord> lootRecords = Collections.emptyList();
 	private long lootNow;
 
@@ -154,11 +160,11 @@ public class BankAuditorPanel extends PluginPanel
 		JPanel view = new JPanel(new BorderLayout(0, ROW_GAP));
 		view.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		JPanel top = new JPanel(new BorderLayout(0, ROW_GAP));
+		JPanel top = new JPanel(new BorderLayout(6, 0));
 		top.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		top.add(buildModeTabs(), BorderLayout.NORTH);
 		styleSummary(lootSummary);
-		top.add(lootSummary, BorderLayout.SOUTH);
+		top.add(lootSummary, BorderLayout.CENTER);
+		top.add(buildModeButtons(), BorderLayout.EAST);
 		view.add(top, BorderLayout.NORTH);
 
 		lootList.setLayout(new BoxLayout(lootList, BoxLayout.Y_AXIS));
@@ -184,33 +190,67 @@ public class BankAuditorPanel extends PluginPanel
 		return view;
 	}
 
-	private MaterialTabGroup buildModeTabs()
+	/**
+	 * A row of small icon buttons that switch the loot list between its views. They look nothing like
+	 * the Loot and Sell tabs on purpose, since they only change how the same list is shown.
+	 */
+	private JPanel buildModeButtons()
 	{
-		// The tabs only switch what the loot list shows, so their own display panel is never added anywhere
-		MaterialTabGroup modes = new MaterialTabGroup(new JPanel());
-		modes.setLayout(new GridLayout(1, LootGroups.Mode.values().length, 2, 0));
+		JPanel row = new JPanel(new GridLayout(1, LootGroups.Mode.values().length, 2, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		for (LootGroups.Mode m : LootGroups.Mode.values())
 		{
-			MaterialTab tab = new MaterialTab(m.getLabel(), modes, new JPanel());
-			tab.setFont(FontManager.getRunescapeSmallFont());
-			tab.setToolTipText(m == LootGroups.Mode.DEFAULT ? "Every drop on its own" : "Combine drops by " + m.getLabel().toLowerCase());
-			modes.addTab(tab);
-			if (m == mode)
+			JLabel button = new JLabel(new ImageIcon(ImageUtil.loadImageResource(BankAuditorPanel.class, m.getIcon())));
+			button.setOpaque(true);
+			button.setPreferredSize(new Dimension(MODE_BUTTON_SIZE, MODE_BUTTON_SIZE));
+			button.setToolTipText(m.getLabel() + ": " + m.getDescription());
+			button.addMouseListener(new MouseAdapter()
 			{
-				modes.select(tab);
-			}
-			tab.setOnSelectEvent(() ->
-			{
-				if (mode != m)
+				@Override
+				public void mousePressed(MouseEvent e)
 				{
-					mode = m;
-					onModeChange.accept(m);
-					renderLoot();
+					if (SwingUtilities.isLeftMouseButton(e) && mode != m)
+					{
+						mode = m;
+						styleModeButtons();
+						onModeChange.accept(m);
+						renderLoot();
+					}
 				}
-				return true;
+
+				@Override
+				public void mouseEntered(MouseEvent e)
+				{
+					hoveredMode = m;
+					styleModeButtons();
+				}
+
+				@Override
+				public void mouseExited(MouseEvent e)
+				{
+					if (hoveredMode == m)
+					{
+						hoveredMode = null;
+						styleModeButtons();
+					}
+				}
 			});
+			modeButtons.put(m, button);
+			row.add(button);
 		}
-		return modes;
+		styleModeButtons();
+		return row;
+	}
+
+	private void styleModeButtons()
+	{
+		for (Map.Entry<LootGroups.Mode, JLabel> entry : modeButtons.entrySet())
+		{
+			JLabel button = entry.getValue();
+			boolean selected = entry.getKey() == mode;
+			button.setBackground(entry.getKey() == hoveredMode ? ColorScheme.DARK_GRAY_HOVER_COLOR : ColorScheme.DARKER_GRAY_COLOR);
+			button.setBorder(BorderFactory.createLineBorder(selected ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_COLOR));
+		}
 	}
 
 	private JPanel buildSellView()
@@ -225,6 +265,15 @@ public class BankAuditorPanel extends PluginPanel
 		sellList.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		view.add(sellList, BorderLayout.CENTER);
 		return view;
+	}
+
+	/**
+	 * The summary shares its line with the view buttons, so it stays short and the tooltip says it in full.
+	 */
+	private void setSummary(String text, String tooltip)
+	{
+		lootSummary.setText(text);
+		lootSummary.setToolTipText(tooltip);
 	}
 
 	private static void styleSummary(JLabel label)
@@ -251,18 +300,19 @@ public class BankAuditorPanel extends PluginPanel
 		int totalCount = lootRecords.size();
 		if (lootRecords.isEmpty())
 		{
-			lootSummary.setText(html("No loot recorded yet. Kill something!"));
+			setSummary("No loot yet", "No loot recorded yet. Kill something!");
 		}
 		else if (mode == LootGroups.Mode.DEFAULT)
 		{
 			List<LootRecord> shown = lootRecords.subList(0, Math.min(MAX_LOOT_ROWS, totalCount));
+			String drops = Formats.commas(totalCount) + (totalCount == 1 ? " drop" : " drops");
 			if (shown.size() < totalCount)
 			{
-				lootSummary.setText(html("Latest " + shown.size() + " of " + Formats.commas(totalCount) + " loot records"));
+				setSummary("Latest " + shown.size() + " of " + drops, "The latest " + shown.size() + " of " + drops + ", newest first");
 			}
 			else
 			{
-				lootSummary.setText(html(Formats.commas(totalCount) + (totalCount == 1 ? " loot record" : " loot records")));
+				setSummary(drops, drops + ", newest first");
 			}
 			for (LootRecord record : shown)
 			{
@@ -275,13 +325,16 @@ public class BankAuditorPanel extends PluginPanel
 			ZoneId zone = ZoneId.systemDefault();
 			List<LootGroups.Group> groups = LootGroups.group(lootRecords, mode, zone);
 			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source" : "day";
-			String text = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s")
-				+ " from " + Formats.commas(totalCount) + (totalCount == 1 ? " loot record" : " loot records");
+			String count = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s");
+			String drops = Formats.commas(totalCount) + (totalCount == 1 ? " drop" : " drops");
 			if (groups.size() > MAX_GROUPS)
 			{
-				text += ", latest " + MAX_GROUPS + " shown";
+				setSummary(MAX_GROUPS + " of " + count + ", " + drops, "The latest " + MAX_GROUPS + " of " + count + ", from " + drops);
 			}
-			lootSummary.setText(html(text));
+			else
+			{
+				setSummary(count + ", " + drops, count + " from " + drops);
+			}
 			for (LootGroups.Group group : groups.subList(0, Math.min(MAX_GROUPS, groups.size())))
 			{
 				String title = mode == LootGroups.Mode.DAY ? LootGroups.dayTitle(group.getTitle(), lootNow, zone) : group.getTitle();
