@@ -772,27 +772,27 @@ public class BankAuditorPanel extends PluginPanel
 			items.add(expandRow(key, open ? "Show fewer items"
 				: "Show " + more + (more == 1 ? " more item" : " more items")));
 		}
-		items.add(totalsRow(geTotal, haTotal));
 		box.add(items, BorderLayout.CENTER);
+		box.add(totalsRow(geTotal, haTotal), BorderLayout.SOUTH);
 		return box;
 	}
 
 	/**
 	 * The footer: the GE and HA totals side by side in the middle, in a bigger font than the item values.
+	 * It shares the header's color and sits outside the value edge, so the box reads as framed.
 	 */
 	private JPanel totalsRow(long geTotal, long haTotal)
 	{
 		JPanel row = new JPanel(new BorderLayout(6, 0));
-		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		row.setBackground(HEADER_COLOR);
 		row.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.DARK_GRAY_COLOR),
-			new EmptyBorder(4, 6, 4, 6)));
+			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.BORDER_COLOR),
+			new EmptyBorder(6, 6, 6, 6)));
 		JPanel values = new JPanel(new FlowLayout(FlowLayout.CENTER, TOTAL_GAP, 0));
 		values.setOpaque(false);
 		values.add(totalLabel(GE_TOTAL_ICON, geTotal, ColorScheme.GRAND_EXCHANGE_PRICE, "GE total"));
 		values.add(totalLabel(HA_TOTAL_ICON, haTotal, ColorScheme.GRAND_EXCHANGE_ALCH, "HA total"));
 		row.add(values, BorderLayout.CENTER);
-		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		return row;
 	}
 
