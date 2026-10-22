@@ -36,6 +36,14 @@ public interface BankAuditorConfig extends Config
 	)
 	String sellSection = "sell";
 
+	@ConfigSection(
+		name = "Loot colors",
+		description = "Color loot in the side panel by how much a stack is worth",
+		position = 3,
+		closedByDefault = true
+	)
+	String colorSection = "colors";
+
 	@ConfigItem(
 		keyName = "trackLoot",
 		name = "Track loot",
@@ -258,5 +266,121 @@ public interface BankAuditorConfig extends Config
 	default Color sellableColor()
 	{
 		return new Color(255, 200, 0, 220);
+	}
+
+	@ConfigItem(
+		keyName = "valueColors",
+		name = "Color by value",
+		description = "Color item lines and totals in the side panel when their value reaches a tier below",
+		section = colorSection,
+		position = 0
+	)
+	default boolean valueColors()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "lowValue",
+		name = "Low value",
+		description = "Stacks worth at least this much get the low value color. 0 turns this tier off.",
+		section = colorSection,
+		position = 1
+	)
+	@Range(min = 0)
+	@Units(" gp")
+	default int lowValue()
+	{
+		return 20_000;
+	}
+
+	@ConfigItem(
+		keyName = "lowValueColor",
+		name = "Low value color",
+		description = "Color for stacks that reach the low value",
+		section = colorSection,
+		position = 2
+	)
+	default Color lowValueColor()
+	{
+		return new Color(0x66, 0xB2, 0xFF);
+	}
+
+	@ConfigItem(
+		keyName = "mediumValue",
+		name = "Medium value",
+		description = "Stacks worth at least this much get the medium value color. 0 turns this tier off.",
+		section = colorSection,
+		position = 3
+	)
+	@Range(min = 0)
+	@Units(" gp")
+	default int mediumValue()
+	{
+		return 100_000;
+	}
+
+	@ConfigItem(
+		keyName = "mediumValueColor",
+		name = "Medium value color",
+		description = "Color for stacks that reach the medium value",
+		section = colorSection,
+		position = 4
+	)
+	default Color mediumValueColor()
+	{
+		return new Color(0x99, 0xFF, 0x99);
+	}
+
+	@ConfigItem(
+		keyName = "highValue",
+		name = "High value",
+		description = "Stacks worth at least this much get the high value color. 0 turns this tier off.",
+		section = colorSection,
+		position = 5
+	)
+	@Range(min = 0)
+	@Units(" gp")
+	default int highValue()
+	{
+		return 1_000_000;
+	}
+
+	@ConfigItem(
+		keyName = "highValueColor",
+		name = "High value color",
+		description = "Color for stacks that reach the high value",
+		section = colorSection,
+		position = 6
+	)
+	default Color highValueColor()
+	{
+		return new Color(0xFF, 0x96, 0x00);
+	}
+
+	@ConfigItem(
+		keyName = "insaneValue",
+		name = "Insane value",
+		description = "Stacks worth at least this much get the insane value color. 0 turns this tier off.",
+		section = colorSection,
+		position = 7
+	)
+	@Range(min = 0)
+	@Units(" gp")
+	default int insaneValue()
+	{
+		return 10_000_000;
+	}
+
+	@ConfigItem(
+		keyName = "insaneValueColor",
+		name = "Insane value color",
+		description = "Color for stacks that reach the insane value",
+		section = colorSection,
+		position = 8
+	)
+	default Color insaneValueColor()
+	{
+		return new Color(0xFF, 0x66, 0xB2);
 	}
 }

@@ -17,7 +17,10 @@ import io.lupix.runelite.bankauditor.sell.SellableCalculator;
 import io.lupix.runelite.bankauditor.ui.BankAuditorOverlay;
 import io.lupix.runelite.bankauditor.ui.BankAuditorPanel;
 import io.lupix.runelite.bankauditor.ui.LootGroups;
+import io.lupix.runelite.bankauditor.ui.SourceIcons;
 import io.lupix.runelite.bankauditor.ui.TooltipText;
+import io.lupix.runelite.bankauditor.ui.ValueTiers;
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -67,6 +70,7 @@ import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.SpriteID;
 import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetUtil;
@@ -81,6 +85,9 @@ import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.events.ServerNpcLoot;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemStack;
+import net.runelite.client.game.SpriteManager;
+import net.runelite.client.hiscore.HiscoreSkill;
+import net.runelite.client.hiscore.HiscoreSkillType;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDependency;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -154,6 +161,9 @@ public class BankAuditorPlugin extends Plugin
 
 	@Inject
 	private ItemManager itemManager;
+
+	@Inject
+	private SpriteManager spriteManager;
 
 	@Inject
 	private ConfigManager configManager;
@@ -1116,7 +1126,7 @@ public class BankAuditorPlugin extends Plugin
 		{
 			return;
 		}
-		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, () -> clientThread.invokeLater(this::clearLootData),
+		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, spriteManager, sourceIcons(), () -> clientThread.invokeLater(this::clearLootData),
 			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()));
 		newPanel.setOnActivate(() -> clientThread.invokeLater(this::refreshPanel));
 		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
@@ -1155,12 +1165,37 @@ public class BankAuditorPlugin extends Plugin
 		boolean bankSeen = bankCounts != null;
 		boolean tagEnabled = config.sellableTag();
 		long now = System.currentTimeMillis();
+		ValueTiers tiers = valueTiers();
 
 		SwingUtilities.invokeLater(() ->
 		{
-			target.showLoot(newest, now);
+			target.showLoot(newest, now, tiers);
 			target.showSellList(sell, bankSeen, tagEnabled);
 		});
+	}
+
+	private ValueTiers valueTiers()
+	{
+		if (!config.valueColors())
+		{
+			return ValueTiers.NONE;
+		}
+		return new ValueTiers(
+			new long[]{config.lowValue(), config.mediumValue(), config.highValue(), config.insaneValue()},
+			new Color[]{config.lowValueColor(), config.mediumValueColor(), config.highValueColor(), config.insaneValueColor()});
+	}
+
+	private static SourceIcons sourceIcons()
+	{
+		Map<String, Integer> bosses = new HashMap<>();
+		for (HiscoreSkill skill : HiscoreSkill.values())
+		{
+			if (skill.getType() == HiscoreSkillType.BOSS && skill.getSpriteId() != -1)
+			{
+				bosses.put(skill.getName(), skill.getSpriteId());
+			}
+		}
+		return new SourceIcons(bosses, SpriteID.SideIcons.COMBAT, SpriteID.Staticons.THIEVING);
 	}
 
 	private void clearLootData()

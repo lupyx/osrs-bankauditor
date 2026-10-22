@@ -3,6 +3,7 @@ package io.lupix.runelite.bankauditor.ui;
 import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
+import io.lupix.runelite.bankauditor.loot.LootSourceType;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -82,6 +83,14 @@ public final class LootGroups
 			this.name = name;
 		}
 
+		static Line of(LootItem item)
+		{
+			Line line = new Line(item.getId(), item.getName());
+			line.quantity = item.getQuantity();
+			line.value = item.getValue();
+			return line;
+		}
+
 		public int getId()
 		{
 			return id;
@@ -115,6 +124,8 @@ public final class LootGroups
 		private long totalValue;
 		private final Map<Integer, Line> lines = new LinkedHashMap<>();
 		private final Map<String, Integer> others = new LinkedHashMap<>();
+		private final Map<String, Integer> sources = new LinkedHashMap<>();
+		private final Map<String, LootSourceType> sourceTypes = new LinkedHashMap<>();
 
 		Group(String title)
 		{
@@ -150,6 +161,19 @@ public final class LootGroups
 		public long getTotalValue()
 		{
 			return totalValue;
+		}
+
+		/**
+		 * The source with the most drops in the group, for its icon.
+		 */
+		public String getTopSource()
+		{
+			return Collections.max(sources.entrySet(), Map.Entry.comparingByValue()).getKey();
+		}
+
+		public LootSourceType getTopSourceType()
+		{
+			return sourceTypes.get(getTopSource());
 		}
 
 		/**
@@ -202,6 +226,8 @@ public final class LootGroups
 			group.drops++;
 			group.newest = Math.max(group.newest, record.getTimestamp());
 			group.others.merge(other.apply(record), 1, Integer::sum);
+			group.sources.merge(record.getSource(), 1, Integer::sum);
+			group.sourceTypes.putIfAbsent(record.getSource(), record.getType());
 			for (LootItem item : record.getItems())
 			{
 				Line line = group.lines.computeIfAbsent(item.getId(), id -> new Line(id, item.getName()));

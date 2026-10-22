@@ -31,6 +31,8 @@ Sellable: 1,200 (240K gp)
 
 **Loot history.** The side panel lists recent drops with the source, how long ago, and the area and world. Hover the area to see the exact tile. The tabs above the list switch between every drop on its own and drops combined by location, by NPC or by day. A combined box adds up the items and their value, and says how many drops went into it. The panel remembers the last tab you picked.
 
+Each box shows the boss icon when the source has one on the hiscores (Vorkath, Zulrah, raids and so on), and every item line has its icon, quantity and value. Stacks worth a lot get colored by value tier like ground items: 20K, 100K, 1M and 10M gp by default. The tiers and colors are in the Loot colors section of the settings. Clear loot data asks you to confirm first, with Cancel as the default.
+
 ## Settings
 
 Every part can be turned off on its own.
@@ -53,6 +55,9 @@ Every part can be turned off on its own.
 | | Highlight at Grand Exchange | on |
 | | Highlight style | underline (or outline, or corner mark) |
 | | Sellable color | yellow |
+| Loot colors | Color by value | on |
+| | Low, medium, high, insane value | 20K, 100K, 1M, 10M gp |
+| | Their colors | blue, green, orange, pink |
 
 ## How the loot count works
 

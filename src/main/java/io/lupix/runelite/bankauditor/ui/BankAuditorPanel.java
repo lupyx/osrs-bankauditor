@@ -8,25 +8,33 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.GridLayout;
+import java.awt.image.BufferedImage;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.ui.components.materialtabs.MaterialTab;
 import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
+import net.runelite.client.util.ImageUtil;
 
 /**
  * Side panel with two tabs: recent loot (what, when, from what and where) and the sell list.
@@ -49,8 +57,17 @@ public class BankAuditorPanel extends PluginPanel
 	 * Item lines per combined box, the most valuable ones.
 	 */
 	private static final int MAX_GROUP_LINES = 15;
+	private static final int SOURCE_ICON_SIZE = 20;
+	private static final int ITEM_ICON_WIDTH = 36;
+	private static final int ITEM_ICON_HEIGHT = 32;
+	private static final Color ROW_ALT_COLOR = new Color(35, 35, 35);
+	private static final ImageIcon BIN_ICON = new ImageIcon(ImageUtil.loadImageResource(BankAuditorPanel.class, "/io/lupix/runelite/bankauditor/bin.png"));
 
 	private final ItemManager itemManager;
+	private final SpriteManager spriteManager;
+	private final SourceIcons icons;
+	private final Map<Integer, ImageIcon> sprites = new HashMap<>();
+	private ValueTiers tiers = ValueTiers.NONE;
 	private final Runnable onClearLoot;
 	private final Consumer<LootGroups.Mode> onModeChange;
 	private LootGroups.Mode mode;
@@ -72,9 +89,12 @@ public class BankAuditorPanel extends PluginPanel
 	 * @param mode         the loot view to start on
 	 * @param onModeChange told when the user picks another loot view, so it can be remembered
 	 */
-	public BankAuditorPanel(ItemManager itemManager, Runnable onClearLoot, LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange)
+	public BankAuditorPanel(ItemManager itemManager, SpriteManager spriteManager, SourceIcons icons, Runnable onClearLoot,
+		LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange)
 	{
 		this.itemManager = itemManager;
+		this.spriteManager = spriteManager;
+		this.icons = icons;
 		this.onClearLoot = onClearLoot;
 		this.mode = mode;
 		this.onModeChange = onModeChange;
@@ -145,14 +165,17 @@ public class BankAuditorPanel extends PluginPanel
 		lootList.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		view.add(lootList, BorderLayout.CENTER);
 
-		JButton clear = new JButton("Clear loot data");
+		JButton clear = new JButton("Clear loot data", BIN_ICON);
+		clear.setIconTextGap(6);
 		clear.setToolTipText("Forget all loot history and stop counting current stacks as loot");
 		clear.addActionListener(e ->
 		{
-			int answer = JOptionPane.showConfirmDialog(this,
-				"This forgets your loot history and stops counting any current stacks as loot. Continue?",
-				"Clear loot data", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-			if (answer == JOptionPane.YES_OPTION)
+			// Cancel is the default, so pressing Enter or Space by accident keeps the data
+			Object[] options = {"Clear", "Cancel"};
+			int answer = JOptionPane.showOptionDialog(this,
+				"This forgets your loot history and stops counting any current stacks as loot. It can't be undone.",
+				"Clear loot data", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
+			if (answer == 0)
 			{
 				onClearLoot.run();
 			}
@@ -212,11 +235,13 @@ public class BankAuditorPanel extends PluginPanel
 
 	/**
 	 * @param records every loot record, newest first
+	 * @param tiers   colors for valuable stacks, or {@link ValueTiers#NONE}
 	 */
-	public void showLoot(List<LootRecord> records, long now)
+	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers)
 	{
 		lootRecords = records;
 		lootNow = now;
+		this.tiers = tiers;
 		renderLoot();
 	}
 
@@ -330,119 +355,178 @@ public class BankAuditorPanel extends PluginPanel
 
 	private JPanel lootBox(LootRecord record, long now)
 	{
-		JPanel box = new JPanel(new BorderLayout());
-		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-
-		JPanel header = new JPanel(new BorderLayout(4, 0));
-		header.setBackground(ColorScheme.DARKER_GRAY_HOVER_COLOR);
-		header.setBorder(new EmptyBorder(4, 6, 4, 6));
-
-		JLabel source = new JLabel(record.describeSource());
-		source.setFont(FontManager.getRunescapeSmallFont());
-		source.setForeground(Color.WHITE);
-		// Centre takes whatever width the time leaves, so long names get cut with "..." instead of overlapping
-		source.setToolTipText(record.describeSource());
-		header.add(source, BorderLayout.CENTER);
-
-		JLabel when = new JLabel(Formats.ago(now, record.getTimestamp()));
-		when.setFont(FontManager.getRunescapeSmallFont());
-		when.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		header.add(when, BorderLayout.EAST);
-
 		String location = record.describeLocation();
+		JLabel where = null;
 		if (location != null)
 		{
-			JLabel where = new JLabel(location);
-			where.setFont(FontManager.getRunescapeSmallFont());
-			where.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			where = smallLabel(location, ColorScheme.LIGHT_GRAY_COLOR);
 			where.setToolTipText(record.getLocation().describeWithTile());
-			header.add(where, BorderLayout.SOUTH);
 		}
-		box.add(header, BorderLayout.NORTH);
-
-		JPanel items = new JPanel();
-		items.setLayout(new BoxLayout(items, BoxLayout.Y_AXIS));
-		items.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		items.setBorder(new EmptyBorder(4, 6, 4, 6));
+		List<LootGroups.Line> lines = new ArrayList<>();
 		for (LootItem item : record.getItems())
 		{
-			items.add(lineRow(Formats.commas(item.getQuantity()) + " x " + item.getName(),
-				item.getValue() > 0 ? Formats.compact(item.getValue()) : ""));
+			lines.add(LootGroups.Line.of(item));
 		}
-		if (record.getTotalValue() > 0)
-		{
-			JLabel total = new JLabel("Total " + Formats.compact(record.getTotalValue()) + " gp");
-			total.setFont(FontManager.getRunescapeSmallFont());
-			total.setForeground(ColorScheme.GRAND_EXCHANGE_PRICE);
-			total.setHorizontalAlignment(SwingConstants.RIGHT);
-			JPanel totalRow = new JPanel(new BorderLayout());
-			totalRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			totalRow.add(total, BorderLayout.EAST);
-			items.add(totalRow);
-		}
-		box.add(items, BorderLayout.CENTER);
-		return box;
+		lines.sort(Comparator.comparingLong(LootGroups.Line::getValue).reversed());
+		return dropBox(record.describeSource(), icons.spriteFor(record.getSource(), record.getType()),
+			Formats.ago(now, record.getTimestamp()), where, lines, record.getTotalValue());
 	}
 
 	private JPanel groupBox(LootGroups.Group group, String title)
 	{
+		JLabel detail = smallLabel(group.getDetail(), ColorScheme.LIGHT_GRAY_COLOR);
+		detail.setToolTipText(group.getDetail());
+		String when = mode == LootGroups.Mode.DAY ? null : Formats.ago(lootNow, group.getNewest());
+		return dropBox(title, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
+			group.getLines(), group.getTotalValue());
+	}
+
+	/**
+	 * A box with a header (source icon, title, time and one line under it) over a table of items
+	 * with their icons, and the total value at the bottom.
+	 */
+	private JPanel dropBox(String title, int sprite, String when, JLabel subtitle, List<LootGroups.Line> lines, long totalValue)
+	{
 		JPanel box = new JPanel(new BorderLayout());
 		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		Color totalColor = tiers.colorFor(totalValue);
+		box.setBorder(BorderFactory.createMatteBorder(0, 2, 0, 0, totalColor != null ? totalColor : ColorScheme.DARKER_GRAY_HOVER_COLOR));
 
-		JPanel header = new JPanel(new BorderLayout(4, 0));
+		JPanel header = new JPanel(new BorderLayout(6, 0));
 		header.setBackground(ColorScheme.DARKER_GRAY_HOVER_COLOR);
 		header.setBorder(new EmptyBorder(4, 6, 4, 6));
 
-		JLabel name = new JLabel(title);
-		name.setFont(FontManager.getRunescapeSmallFont());
-		name.setForeground(Color.WHITE);
+		JLabel icon = new JLabel();
+		icon.setPreferredSize(new Dimension(SOURCE_ICON_SIZE, SOURCE_ICON_SIZE));
+		icon.setHorizontalAlignment(SwingConstants.CENTER);
+		setSprite(icon, sprite);
+		header.add(icon, BorderLayout.WEST);
+
+		JPanel text = new JPanel(new BorderLayout(4, 0));
+		text.setOpaque(false);
+		JLabel name = smallLabel(title, Color.WHITE);
+		// Centre takes whatever width the time leaves, so long names get cut with "..." instead of overlapping
 		name.setToolTipText(title);
-		header.add(name, BorderLayout.CENTER);
-
-		if (mode != LootGroups.Mode.DAY)
+		text.add(name, BorderLayout.CENTER);
+		if (when != null)
 		{
-			JLabel when = new JLabel(Formats.ago(lootNow, group.getNewest()));
-			when.setFont(FontManager.getRunescapeSmallFont());
-			when.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			when.setToolTipText("Latest drop");
-			header.add(when, BorderLayout.EAST);
+			JLabel time = smallLabel(when, ColorScheme.LIGHT_GRAY_COLOR);
+			text.add(time, BorderLayout.EAST);
 		}
-
-		JLabel detail = new JLabel(group.getDetail());
-		detail.setFont(FontManager.getRunescapeSmallFont());
-		detail.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		detail.setToolTipText(group.getDetail());
-		header.add(detail, BorderLayout.SOUTH);
+		if (subtitle != null)
+		{
+			text.add(subtitle, BorderLayout.SOUTH);
+		}
+		header.add(text, BorderLayout.CENTER);
 		box.add(header, BorderLayout.NORTH);
 
 		JPanel items = new JPanel();
 		items.setLayout(new BoxLayout(items, BoxLayout.Y_AXIS));
 		items.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		items.setBorder(new EmptyBorder(4, 6, 4, 6));
-		List<LootGroups.Line> lines = group.getLines();
-		for (LootGroups.Line line : lines.subList(0, Math.min(MAX_GROUP_LINES, lines.size())))
+		List<LootGroups.Line> shown = lines.subList(0, Math.min(MAX_GROUP_LINES, lines.size()));
+		for (int i = 0; i < shown.size(); i++)
 		{
-			items.add(lineRow(Formats.commas(line.getQuantity()) + " x " + line.getName(),
-				line.getValue() > 0 ? Formats.compact(line.getValue()) : ""));
+			items.add(itemRow(shown.get(i), i % 2 == 1));
 		}
-		if (lines.size() > MAX_GROUP_LINES)
+		if (lines.size() > shown.size())
 		{
-			int more = lines.size() - MAX_GROUP_LINES;
-			items.add(lineRow("and " + more + (more == 1 ? " more item" : " more items"), ""));
+			int more = lines.size() - shown.size();
+			JPanel moreRow = new JPanel(new BorderLayout());
+			moreRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			moreRow.setBorder(new EmptyBorder(2, 6, 2, 6));
+			moreRow.add(smallLabel("and " + more + (more == 1 ? " more item" : " more items"), ColorScheme.LIGHT_GRAY_COLOR));
+			items.add(moreRow);
 		}
-		if (group.getTotalValue() > 0)
+
+		JPanel footer = new JPanel(new BorderLayout());
+		footer.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		footer.setBorder(new EmptyBorder(3, 6, 4, 6));
+		String count = lines.size() == 1 ? "1 item" : lines.size() + " items";
+		footer.add(smallLabel(count, ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
+		if (totalValue > 0)
 		{
-			JLabel total = new JLabel("Total " + Formats.compact(group.getTotalValue()) + " gp");
-			total.setFont(FontManager.getRunescapeSmallFont());
-			total.setForeground(ColorScheme.GRAND_EXCHANGE_PRICE);
-			total.setHorizontalAlignment(SwingConstants.RIGHT);
-			JPanel totalRow = new JPanel(new BorderLayout());
-			totalRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			totalRow.add(total, BorderLayout.EAST);
-			items.add(totalRow);
+			JLabel total = smallLabel(Formats.compact(totalValue) + " gp", totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
+			total.setToolTipText(Formats.commas(totalValue) + " gp");
+			footer.add(total, BorderLayout.EAST);
 		}
+		items.add(footer);
+
 		box.add(items, BorderLayout.CENTER);
 		return box;
+	}
+
+	/**
+	 * One table row: the item icon with its quantity, the name, and the stack's value, colored by tier.
+	 */
+	private JPanel itemRow(LootGroups.Line line, boolean odd)
+	{
+		Color background = odd ? ROW_ALT_COLOR : ColorScheme.DARKER_GRAY_COLOR;
+		Color tier = tiers.colorFor(line.getValue());
+
+		JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setBackground(background);
+		row.setBorder(new EmptyBorder(1, 4, 1, 6));
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, ITEM_ICON_HEIGHT + 2));
+
+		JLabel icon = new JLabel();
+		icon.setPreferredSize(new Dimension(ITEM_ICON_WIDTH, ITEM_ICON_HEIGHT));
+		int quantity = (int) Math.min(Integer.MAX_VALUE, line.getQuantity());
+		itemManager.getImage(line.getId(), quantity, line.getQuantity() > 1).addTo(icon);
+		row.add(icon, BorderLayout.WEST);
+
+		JPanel text = new JPanel(new GridLayout(2, 1));
+		text.setOpaque(false);
+		text.add(smallLabel(line.getName(), tier != null ? tier : Color.WHITE));
+		String detail = "x " + Formats.commas(line.getQuantity());
+		if (line.getValue() > 0)
+		{
+			detail += ", " + Formats.compact(line.getValue()) + " gp";
+		}
+		text.add(smallLabel(detail, tier != null ? tier : ColorScheme.LIGHT_GRAY_COLOR));
+		row.add(text, BorderLayout.CENTER);
+
+		String tooltip = Formats.commas(line.getQuantity()) + " x " + line.getName();
+		if (line.getValue() > 0)
+		{
+			tooltip += ", " + Formats.commas(line.getValue()) + " gp";
+		}
+		row.setToolTipText(tooltip);
+		return row;
+	}
+
+	/**
+	 * Sprites load on the client thread, so the icon is filled in once it arrives. Scaled copies are kept
+	 * because every refresh rebuilds the list.
+	 */
+	private void setSprite(JLabel label, int sprite)
+	{
+		ImageIcon cached = sprites.get(sprite);
+		if (cached != null)
+		{
+			label.setIcon(cached);
+			return;
+		}
+		spriteManager.getSpriteAsync(sprite, 0, image ->
+		{
+			if (image == null)
+			{
+				return;
+			}
+			BufferedImage scaled = ImageUtil.resizeImage(image, SOURCE_ICON_SIZE, SOURCE_ICON_SIZE, true);
+			SwingUtilities.invokeLater(() ->
+			{
+				ImageIcon icon = sprites.computeIfAbsent(sprite, k -> new ImageIcon(scaled));
+				label.setIcon(icon);
+			});
+		});
+	}
+
+	private static JLabel smallLabel(String text, Color color)
+	{
+		JLabel label = new JLabel(text);
+		label.setFont(FontManager.getRunescapeSmallFont());
+		label.setForeground(color);
+		return label;
 	}
 
 	private JPanel sellRow(ItemSummary item)
@@ -479,23 +563,6 @@ public class BankAuditorPanel extends PluginPanel
 		text.add(value);
 
 		row.add(text, BorderLayout.CENTER);
-		return row;
-	}
-
-	private static JPanel lineRow(String left, String right)
-	{
-		JPanel row = new JPanel(new BorderLayout(4, 0));
-		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-
-		JLabel name = new JLabel(left);
-		name.setFont(FontManager.getRunescapeSmallFont());
-		name.setForeground(ColorScheme.TEXT_COLOR);
-		row.add(name, BorderLayout.CENTER);
-
-		JLabel value = new JLabel(right);
-		value.setFont(FontManager.getRunescapeSmallFont());
-		value.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		row.add(value, BorderLayout.EAST);
 		return row;
 	}
 
