@@ -7,7 +7,10 @@ import io.lupix.runelite.bankauditor.loot.LootSourceType;
 import java.util.Arrays;
 import java.util.List;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public class LootSearchTest
@@ -41,24 +44,30 @@ public class LootSearchTest
 	}
 
 	@Test
-	public void itemMatchesKeepOnlyThoseItems()
+	public void itemMatchesKeepTheWholeDrop()
 	{
 		List<LootRecord> bones = LootSearch.filter(ALL, "bones", false, false, true);
 
-		assertEquals(2, bones.size());
-		assertEquals(1, bones.get(0).getItems().size());
-		assertEquals("Superior dragon bones", bones.get(0).getItems().get(0).getName());
-		assertEquals(16000, bones.get(0).getTotalValue());
-		assertEquals("Vorkath", bones.get(0).getSource());
-		assertEquals("Bones", bones.get(1).getItems().get(0).getName());
+		assertEquals(Arrays.asList(VORKATH, GOBLIN), bones);
+		assertSame(VORKATH, bones.get(0));
+		assertEquals(Arrays.asList(), LootSearch.filter(ALL, "bones", true, true, false));
 	}
 
 	@Test
-	public void wholeDropKeptWhenEveryItemOrTheSourceMatches()
+	public void highlightWrapsEveryMatch()
 	{
-		// Both of Vorkath's items have "dragon" in their name
-		assertSame(VORKATH, LootSearch.filter(ALL, "dragon", false, false, true).get(0));
-		// "cow" matches the source, so the drop stays whole even with item matching on
-		assertSame(COW, LootSearch.filter(ALL, "cow", true, false, true).get(0));
+		assertEquals("<html><span style='background-color:#123;color:#ffffff'>Bo</span>nes &amp; "
+				+ "<span style='background-color:#123;color:#ffffff'>bo</span>ws</html>",
+			LootSearch.highlight("Bones & bows", " BO ", "#123"));
+		assertNull(LootSearch.highlight("Coins", "bones", "#123"));
+		assertNull(LootSearch.highlight("Coins", "", "#123"));
+		assertNull(LootSearch.highlight(null, "bones", "#123"));
+	}
+
+	@Test
+	public void matchesIgnoresCaseAndBlanks()
+	{
+		assertTrue(LootSearch.matches("Superior dragon bones", "DRAGON"));
+		assertFalse(LootSearch.matches("Superior dragon bones", " "));
 	}
 }

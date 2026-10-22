@@ -7,7 +7,6 @@ import io.lupix.runelite.bankauditor.util.Formats;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -67,7 +66,9 @@ public class BankAuditorPanel extends PluginPanel
 	 * Item lines per combined box, the most valuable ones.
 	 */
 	private static final int MAX_GROUP_LINES = 15;
-	private static final int SOURCE_ICON_SIZE = 20;
+	private static final int SOURCE_ICON_SIZE = 25;
+	private static final Color HEADER_COLOR = new Color(58, 54, 48);
+	private static final String HIGHLIGHT_COLOR = "#9a6400";
 	private static final int MODE_BUTTON_SIZE = 20;
 	private static final int SEARCH_DELAY_MILLIS = 250;
 	private static final int ITEM_ICON_WIDTH = 36;
@@ -99,6 +100,10 @@ public class BankAuditorPanel extends PluginPanel
 	private boolean matchSource = true;
 	private boolean matchLocation = true;
 	private boolean matchItem = true;
+	/**
+	 * The search being shown, so the boxes can highlight what matched.
+	 */
+	private String query = "";
 	private final JPanel lootList = new JPanel();
 	private final JLabel sellSummary = new JLabel();
 	private final JPanel sellList = new JPanel();
@@ -251,15 +256,11 @@ public class BankAuditorPanel extends PluginPanel
 	 */
 	private JPanel buildFilterRow()
 	{
-		JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		// Equal columns over the full width, so all three always fit
+		JPanel row = new JPanel(new GridLayout(1, 3, 3, 0));
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.setAlignmentX(LEFT_ALIGNMENT);
-		JLabel title = smallLabel("Match ", ColorScheme.LIGHT_GRAY_COLOR);
-		row.add(title);
 		row.add(filterChip("Source", "source names", () -> matchSource, on -> matchSource = on));
-		row.add(Box.createHorizontalStrut(3));
 		row.add(filterChip("Location", "location names", () -> matchLocation, on -> matchLocation = on));
-		row.add(Box.createHorizontalStrut(3));
 		row.add(filterChip("Item", "item names", () -> matchItem, on -> matchItem = on));
 		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		return row;
@@ -268,6 +269,7 @@ public class BankAuditorPanel extends PluginPanel
 	private JLabel filterChip(String name, String what, BooleanSupplier get, Consumer<Boolean> set)
 	{
 		JLabel chip = smallLabel(name, Color.WHITE);
+		chip.setHorizontalAlignment(SwingConstants.CENTER);
 		chip.setOpaque(true);
 		chip.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		Runnable style = () ->
@@ -431,7 +433,7 @@ public class BankAuditorPanel extends PluginPanel
 	private void renderLoot()
 	{
 		lootList.removeAll();
-		String query = searchBar.getText().trim();
+		query = searchBar.getText().trim();
 		List<LootRecord> records = LootSearch.filter(lootRecords, query, matchSource, matchLocation, matchItem);
 		int totalCount = records.size();
 		// While searching, the counts say "matching" so an empty list doesn't look like lost data
@@ -555,6 +557,7 @@ public class BankAuditorPanel extends PluginPanel
 		if (location != null)
 		{
 			where = smallLabel(location, ColorScheme.LIGHT_GRAY_COLOR);
+			highlight(where, location, matchLocation);
 			where.setToolTipText(record.getLocation().describeWithTile());
 		}
 		List<LootGroups.Line> lines = new ArrayList<>();
@@ -563,33 +566,39 @@ public class BankAuditorPanel extends PluginPanel
 			lines.add(LootGroups.Line.of(item));
 		}
 		lines.sort(Comparator.comparingLong(LootGroups.Line::getValue).reversed());
-		return dropBox(record.describeSource(), icons.spriteFor(record.getSource(), record.getType()),
+		// The title is also where an area named after the boss shows, like Vorkath at Vorkath
+		return dropBox(record.describeSource(), matchSource || matchLocation, icons.spriteFor(record.getSource(), record.getType()),
 			Formats.ago(now, record.getTimestamp()), where, lines, record.getTotalValue());
 	}
 
 	private JPanel groupBox(LootGroups.Group group, String title)
 	{
 		JLabel detail = smallLabel(group.getDetail(), ColorScheme.LIGHT_GRAY_COLOR);
+		highlight(detail, group.getDetail(), matchSource || matchLocation);
 		detail.setToolTipText(group.getDetail());
 		String when = mode == LootGroups.Mode.DAY ? null : Formats.ago(lootNow, group.getNewest());
-		return dropBox(title, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
+		boolean titleSearched = mode == LootGroups.Mode.LOCATION ? matchLocation : mode == LootGroups.Mode.SOURCE && matchSource;
+		return dropBox(title, titleSearched, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
 			group.getLines(), group.getTotalValue());
 	}
 
 	/**
-	 * A box with a header (source icon, title, time and one line under it) over a table of items
-	 * with their icons, and the total value at the bottom.
+	 * A box with a header (source icon, title, the line under it, time and total value) over a table of
+	 * items with their icons.
 	 */
-	private JPanel dropBox(String title, int sprite, String when, JLabel subtitle, List<LootGroups.Line> lines, long totalValue)
+	private JPanel dropBox(String title, boolean titleSearched, int sprite, String when, JLabel subtitle, List<LootGroups.Line> lines, long totalValue)
 	{
 		JPanel box = new JPanel(new BorderLayout());
 		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		Color totalColor = tiers.colorFor(totalValue);
 		box.setBorder(BorderFactory.createMatteBorder(0, 2, 0, 0, totalColor != null ? totalColor : ColorScheme.DARKER_GRAY_HOVER_COLOR));
 
+		// The header is taller, brighter and bold, with a line under it, so it never reads as another item row
 		JPanel header = new JPanel(new BorderLayout(6, 0));
-		header.setBackground(ColorScheme.DARKER_GRAY_HOVER_COLOR);
-		header.setBorder(new EmptyBorder(4, 6, 4, 6));
+		header.setBackground(HEADER_COLOR);
+		header.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.BORDER_COLOR),
+			new EmptyBorder(5, 5, 5, 6)));
 
 		JLabel icon = new JLabel();
 		icon.setPreferredSize(new Dimension(SOURCE_ICON_SIZE, SOURCE_ICON_SIZE));
@@ -597,27 +606,41 @@ public class BankAuditorPanel extends PluginPanel
 		setSprite(icon, sprite);
 		header.add(icon, BorderLayout.WEST);
 
-		JPanel text = new JPanel(new BorderLayout(4, 0));
+		JPanel text = new JPanel(new GridLayout(2, 1, 0, 1));
 		text.setOpaque(false);
-		JLabel name = smallLabel(title, Color.WHITE);
-		// Centre takes whatever width the time leaves, so long names get cut with "..." instead of overlapping
+		JLabel name = new JLabel(title);
+		name.setFont(FontManager.getRunescapeBoldFont());
+		name.setForeground(Color.WHITE);
+		// Long names get cut with "..." instead of pushing the time and value out
 		name.setToolTipText(title);
-		text.add(name, BorderLayout.CENTER);
-		if (when != null)
-		{
-			JLabel time = smallLabel(when, ColorScheme.LIGHT_GRAY_COLOR);
-			text.add(time, BorderLayout.EAST);
-		}
-		if (subtitle != null)
-		{
-			text.add(subtitle, BorderLayout.SOUTH);
-		}
+		highlight(name, title, titleSearched);
+		text.add(name);
+		text.add(subtitle != null ? subtitle : new JLabel());
 		header.add(text, BorderLayout.CENTER);
+
+		JPanel right = new JPanel(new GridLayout(2, 1, 0, 1));
+		right.setOpaque(false);
+		JLabel time = smallLabel(when != null ? when : "", ColorScheme.LIGHT_GRAY_COLOR);
+		time.setHorizontalAlignment(SwingConstants.RIGHT);
+		right.add(time);
+		JLabel total = smallLabel(totalValue > 0 ? Formats.compact(totalValue) + " gp" : "",
+			totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
+		total.setHorizontalAlignment(SwingConstants.RIGHT);
+		String count = lines.size() == 1 ? "1 item" : lines.size() + " items";
+		total.setToolTipText(totalValue > 0 ? count + ", " + Formats.commas(totalValue) + " gp" : count);
+		right.add(total);
+		header.add(right, BorderLayout.EAST);
 		box.add(header, BorderLayout.NORTH);
 
 		JPanel items = new JPanel();
 		items.setLayout(new BoxLayout(items, BoxLayout.Y_AXIS));
 		items.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		if (matchItem && !query.isEmpty())
+		{
+			// Matching items go first so a long combined box never hides them under "and N more"
+			lines = new ArrayList<>(lines);
+			lines.sort(Comparator.comparing((LootGroups.Line l) -> !LootSearch.matches(l.getName(), query)));
+		}
 		List<LootGroups.Line> shown = lines.subList(0, Math.min(MAX_GROUP_LINES, lines.size()));
 		for (int i = 0; i < shown.size(); i++)
 		{
@@ -632,19 +655,6 @@ public class BankAuditorPanel extends PluginPanel
 			moreRow.add(smallLabel("and " + more + (more == 1 ? " more item" : " more items"), ColorScheme.LIGHT_GRAY_COLOR));
 			items.add(moreRow);
 		}
-
-		JPanel footer = new JPanel(new BorderLayout());
-		footer.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		footer.setBorder(new EmptyBorder(3, 6, 4, 6));
-		String count = lines.size() == 1 ? "1 item" : lines.size() + " items";
-		footer.add(smallLabel(count, ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
-		if (totalValue > 0)
-		{
-			JLabel total = smallLabel(Formats.compact(totalValue) + " gp", totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
-			total.setToolTipText(Formats.commas(totalValue) + " gp");
-			footer.add(total, BorderLayout.EAST);
-		}
-		items.add(footer);
 
 		box.add(items, BorderLayout.CENTER);
 		return box;
@@ -671,7 +681,9 @@ public class BankAuditorPanel extends PluginPanel
 
 		JPanel text = new JPanel(new GridLayout(2, 1));
 		text.setOpaque(false);
-		text.add(smallLabel(line.getName(), tier != null ? tier : Color.WHITE));
+		JLabel name = smallLabel(line.getName(), tier != null ? tier : Color.WHITE);
+		highlight(name, line.getName(), matchItem);
+		text.add(name);
 		String detail = "x " + Formats.commas(line.getQuantity());
 		if (line.getValue() > 0)
 		{
@@ -707,13 +719,26 @@ public class BankAuditorPanel extends PluginPanel
 			{
 				return;
 			}
-			BufferedImage scaled = ImageUtil.resizeImage(image, SOURCE_ICON_SIZE, SOURCE_ICON_SIZE, true);
+			BufferedImage scaled = image.getWidth() <= SOURCE_ICON_SIZE && image.getHeight() <= SOURCE_ICON_SIZE
+				? image : ImageUtil.resizeImage(image, SOURCE_ICON_SIZE, SOURCE_ICON_SIZE, true);
 			SwingUtilities.invokeLater(() ->
 			{
 				ImageIcon icon = sprites.computeIfAbsent(sprite, k -> new ImageIcon(scaled));
 				label.setIcon(icon);
 			});
 		});
+	}
+
+	/**
+	 * Marks the parts of the label that match the search, when that part of the search is on.
+	 */
+	private void highlight(JLabel label, String text, boolean searched)
+	{
+		String html = searched ? LootSearch.highlight(text, query, HIGHLIGHT_COLOR) : null;
+		if (html != null)
+		{
+			label.setText(html);
+		}
 	}
 
 	private static JLabel smallLabel(String text, Color color)
