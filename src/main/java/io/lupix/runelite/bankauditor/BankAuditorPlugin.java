@@ -1232,6 +1232,11 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onMenuEntryAdded(MenuEntryAdded event)
 	{
+		if (event.getActionParam1() == InterfaceID.Bankmain.WORNITEMS_BUTTON)
+		{
+			addSellableOption(event);
+			return;
+		}
 		if (!config.keepMenuOption() || !"Examine".equals(event.getOption()))
 		{
 			return;
@@ -1273,6 +1278,46 @@ public class BankAuditorPlugin extends Plugin
 	// ------------------------------------------------------------------
 	// Sellable bank tag
 	// ------------------------------------------------------------------
+
+	/**
+	 * Right-click on the bank's worn items button opens the sellable tag, or closes it when it is open.
+	 */
+	private void addSellableOption(MenuEntryAdded event)
+	{
+		if (!tagRegistered || event.getType() == MenuAction.RUNELITE.getId())
+		{
+			return;
+		}
+		MenuEntry[] entries = client.getMenu().getMenuEntries();
+		for (MenuEntry entry : entries)
+		{
+			if (entry.getType() == MenuAction.RUNELITE && entry.getParam1() == InterfaceID.Bankmain.WORNITEMS_BUTTON)
+			{
+				// The button can have more than one option, but needs only one of ours
+				return;
+			}
+		}
+		boolean open = SELLABLE_TAG.equals(bankTagsService.getActiveTag());
+		// Just above Cancel, so left-click still shows the worn items
+		client.getMenu().createMenuEntry(Math.min(1, entries.length))
+			.setOption(open ? "Hide sellable" : "Show sellable")
+			.setTarget("")
+			.setType(MenuAction.RUNELITE)
+			.setParam0(event.getActionParam0())
+			.setParam1(InterfaceID.Bankmain.WORNITEMS_BUTTON)
+			.onClick(e ->
+			{
+				if (open)
+				{
+					bankTagsService.closeBankTag();
+				}
+				else
+				{
+					// A layout saved for the tag is used when there is one
+					bankTagsService.openBankTag(SELLABLE_TAG, 0);
+				}
+			});
+	}
 
 	private void registerTag()
 	{

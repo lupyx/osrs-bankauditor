@@ -171,7 +171,8 @@ public interface BankAuditorConfig extends Config
 	@ConfigItem(
 		keyName = "sellableTag",
 		name = "Sellable bank tag",
-		description = "Adds a 'sellable' bank tag you can search for with tag:sellable, showing only items you can sell",
+		description = "Adds a 'sellable' bank tag you can search for with tag:sellable, showing only items you can sell."
+			+ " Right-click the worn items button in the bank to open it.",
 		section = bankSection,
 		position = 5
 	)

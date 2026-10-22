@@ -18,7 +18,7 @@ Sellable: 1,200 (240K gp)
 
 **Loot stacks vs your own stacks.** If you had 5,000 death runes and looted 1,200 more, the plugin knows that 1,200 of the 6,200 are loot. Only those count as sellable, so you can sell the extra runes and keep your own supply.
 
-**Selling.** Sellable items get a highlight in the bank, and in your inventory while the bank or the Grand Exchange is open. Each of the three has its own setting. Type `tag:sellable` (or just `sellable`) in the bank search to see only the sellable items, then withdraw them as notes and sell them in one go. The side panel has a sell list sorted by value.
+**Selling.** Sellable items get a highlight in the bank, and in your inventory while the bank or the Grand Exchange is open. Each of the three has its own setting. Type `tag:sellable` (or just `sellable`) in the bank search, or right-click the worn items button and pick Show sellable, to see only the sellable items, then withdraw them as notes and sell them in one go. The side panel has a sell list sorted by value.
 
 **Keep list.** Items you use never show up as sellable. Right click an item in the bank or inventory and pick **Keep**, or edit the list in the config. Each entry is one item name, one per line or comma separated:
 
