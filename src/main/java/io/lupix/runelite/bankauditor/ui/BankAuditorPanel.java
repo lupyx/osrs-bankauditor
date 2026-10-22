@@ -2,6 +2,7 @@ package io.lupix.runelite.bankauditor.ui;
 
 import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
+import io.lupix.runelite.bankauditor.loot.TripLog;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.util.Formats;
 import java.awt.BorderLayout;
@@ -114,6 +115,11 @@ public class BankAuditorPanel extends PluginPanel
 	private LootGroups.Mode mode;
 	private LootGroups.Interval interval;
 	private JPanel intervalRow;
+	private final Runnable onEndTrip;
+	private JPanel tripRow;
+	private JLabel endTripButton;
+	private boolean endTripHovered;
+	private TripLog trips = new TripLog();
 	private final Map<LootGroups.Interval, JLabel> intervalChips = new EnumMap<>(LootGroups.Interval.class);
 	private LootGroups.Mode hoveredMode;
 	private final Map<LootGroups.Mode, JLabel> modeButtons = new EnumMap<>(LootGroups.Mode.class);
@@ -143,10 +149,11 @@ public class BankAuditorPanel extends PluginPanel
 	/**
 	 * @param mode         the loot view to start on
 	 * @param onModeChange told when the user picks another loot view, so it can be remembered
+	 * @param onEndTrip    ends the loot trip that is going
 	 */
 	public BankAuditorPanel(ItemManager itemManager, SpriteManager spriteManager, SourceIcons icons, Runnable onClearLoot,
 		LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange,
-		LootGroups.Interval interval, Consumer<LootGroups.Interval> onIntervalChange)
+		LootGroups.Interval interval, Consumer<LootGroups.Interval> onIntervalChange, Runnable onEndTrip)
 	{
 		this.itemManager = itemManager;
 		this.spriteManager = spriteManager;
@@ -156,6 +163,7 @@ public class BankAuditorPanel extends PluginPanel
 		this.onModeChange = onModeChange;
 		this.interval = interval;
 		this.onIntervalChange = onIntervalChange;
+		this.onEndTrip = onEndTrip;
 
 		setLayout(new BorderLayout());
 		setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -229,6 +237,8 @@ public class BankAuditorPanel extends PluginPanel
 		top.add(summaryRow);
 		intervalRow = buildIntervalRow();
 		top.add(intervalRow);
+		tripRow = buildTripRow();
+		top.add(tripRow);
 		view.add(top, BorderLayout.NORTH);
 
 		lootList.setLayout(new BoxLayout(lootList, BoxLayout.Y_AXIS));
@@ -388,6 +398,7 @@ public class BankAuditorPanel extends PluginPanel
 						styleModeButtons();
 						onModeChange.accept(m);
 						intervalRow.setVisible(m == LootGroups.Mode.TIME);
+						tripRow.setVisible(m == LootGroups.Mode.TRIP);
 						renderLoot();
 					}
 				}
@@ -454,6 +465,70 @@ public class BankAuditorPanel extends PluginPanel
 		return row;
 	}
 
+	/**
+	 * The End trip button, only shown in the trip view.
+	 */
+	private JPanel buildTripRow()
+	{
+		JPanel row = new JPanel(new BorderLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
+		endTripButton = smallLabel("End trip", Color.WHITE);
+		endTripButton.setHorizontalAlignment(SwingConstants.CENTER);
+		endTripButton.setOpaque(true);
+		endTripButton.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (SwingUtilities.isLeftMouseButton(e) && tripGoing())
+				{
+					onEndTrip.run();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				endTripHovered = true;
+				styleEndTripButton();
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				endTripHovered = false;
+				styleEndTripButton();
+			}
+		});
+		row.add(endTripButton, BorderLayout.CENTER);
+		styleEndTripButton();
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+		row.setVisible(mode == LootGroups.Mode.TRIP);
+		return row;
+	}
+
+	/**
+	 * Whether there are drops since the last trip ended.
+	 */
+	private boolean tripGoing()
+	{
+		return trips.hasCurrent(lootRecords.isEmpty() ? null : lootRecords.get(0).getTimestamp());
+	}
+
+	private void styleEndTripButton()
+	{
+		boolean going = tripGoing();
+		endTripButton.setForeground(going ? Color.WHITE : ColorScheme.MEDIUM_GRAY_COLOR);
+		endTripButton.setBackground(going && endTripHovered ? ColorScheme.DARK_GRAY_HOVER_COLOR : ColorScheme.DARKER_GRAY_COLOR);
+		endTripButton.setCursor(going ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+		endTripButton.setToolTipText(going ? "End this trip now so the next drop starts a new one. Banking does this too."
+			: "No drops since the last trip ended");
+		endTripButton.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(going ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_HOVER_COLOR),
+			new EmptyBorder(2, 5, 2, 5)));
+	}
+
 	private void styleIntervalChips()
 	{
 		for (Map.Entry<LootGroups.Interval, JLabel> entry : intervalChips.entrySet())
@@ -512,15 +587,18 @@ public class BankAuditorPanel extends PluginPanel
 	 * @param tiers      colors for valuable stacks, or {@link ValueTiers#NONE}
 	 * @param itemValues    alch price and tradeability of every item in the records
 	 * @param bestValueOnly show only the higher of the GE and HA value on each item line
+	 * @param trips         where loot trips ended
 	 */
 	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers, Map<Integer, ItemValue> itemValues,
-		boolean bestValueOnly)
+		boolean bestValueOnly, TripLog trips)
 	{
 		lootRecords = records;
 		lootNow = now;
 		this.tiers = tiers;
 		this.itemValues = itemValues;
 		this.bestValueOnly = bestValueOnly;
+		this.trips = trips;
+		styleEndTripButton();
 		renderLoot();
 	}
 
@@ -561,9 +639,9 @@ public class BankAuditorPanel extends PluginPanel
 		else
 		{
 			ZoneId zone = ZoneId.systemDefault();
-			List<LootGroups.Group> groups = LootGroups.group(records, mode, interval, zone);
+			List<LootGroups.Group> groups = LootGroups.group(records, mode, interval, trips, zone);
 			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source"
-				: interval.getLabel().toLowerCase(Locale.ENGLISH);
+				: mode == LootGroups.Mode.TRIP ? "trip" : interval.getLabel().toLowerCase(Locale.ENGLISH);
 			String count = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s");
 			String drops = Formats.commas(totalCount) + matching + (totalCount == 1 ? " drop" : " drops");
 			if (groups.size() > MAX_GROUPS)
@@ -576,7 +654,8 @@ public class BankAuditorPanel extends PluginPanel
 			}
 			for (LootGroups.Group group : groups.subList(0, Math.min(MAX_GROUPS, groups.size())))
 			{
-				String title = mode == LootGroups.Mode.TIME ? LootGroups.periodTitle(group.getTitle(), interval, lootNow, zone) : group.getTitle();
+				String title = mode == LootGroups.Mode.TIME ? LootGroups.periodTitle(group.getTitle(), interval, lootNow, zone)
+					: mode == LootGroups.Mode.TRIP ? LootGroups.tripTitle(group, lootNow, zone) : group.getTitle();
 				lootList.add(groupBox(group, title));
 				lootList.add(gap());
 			}
@@ -672,7 +751,10 @@ public class BankAuditorPanel extends PluginPanel
 		JLabel detail = smallLabel(group.getDetail(), ColorScheme.LIGHT_GRAY_COLOR);
 		highlight(detail, group.getDetail(), matchSource || matchLocation);
 		detail.setToolTipText(group.getDetail());
-		String when = mode == LootGroups.Mode.TIME ? null : Formats.ago(lootNow, group.getNewest());
+		// A trip shows how long it took, from its first drop to its last
+		String when = mode == LootGroups.Mode.TIME ? null
+			: mode == LootGroups.Mode.TRIP ? Formats.duration(group.getNewest() - group.getOldest())
+			: Formats.ago(lootNow, group.getNewest());
 		boolean titleSearched = mode == LootGroups.Mode.LOCATION ? matchLocation : mode == LootGroups.Mode.SOURCE && matchSource;
 		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
 			group.getLines());

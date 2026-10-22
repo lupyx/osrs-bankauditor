@@ -3,6 +3,7 @@ package io.lupix.runelite.bankauditor.util;
 import static io.lupix.runelite.bankauditor.util.Formats.ago;
 import static io.lupix.runelite.bankauditor.util.Formats.commas;
 import static io.lupix.runelite.bankauditor.util.Formats.compact;
+import static io.lupix.runelite.bankauditor.util.Formats.duration;
 import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
@@ -43,5 +44,15 @@ public class FormatsTest
 		assertEquals("2 h ago", ago(now, now - 2 * 3_600_000 - 5));
 		assertEquals("1 day ago", ago(now, now - 25 * 3_600_000));
 		assertEquals("3 days ago", ago(now, now - 3 * 24 * 3_600_000));
+	}
+
+	@Test
+	public void durations()
+	{
+		assertEquals("under 1 min", duration(0));
+		assertEquals("under 1 min", duration(59_000));
+		assertEquals("43 min", duration(43 * 60_000 + 5));
+		assertEquals("2 h", duration(2 * 3_600_000));
+		assertEquals("1 h 5 min", duration(65 * 60_000));
 	}
 }

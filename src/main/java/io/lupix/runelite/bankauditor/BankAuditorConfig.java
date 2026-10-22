@@ -157,11 +157,23 @@ public interface BankAuditorConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "highlightSellableInInventory",
+		name = "Highlight sellable in inventory",
+		description = "Mark sellable items in your inventory while the bank is open",
+		section = bankSection,
+		position = 4
+	)
+	default boolean highlightSellableInInventory()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "sellableTag",
 		name = "Sellable bank tag",
 		description = "Adds a 'sellable' bank tag you can search for with tag:sellable, showing only items you can sell",
 		section = bankSection,
-		position = 4
+		position = 5
 	)
 	default boolean sellableTag()
 	{

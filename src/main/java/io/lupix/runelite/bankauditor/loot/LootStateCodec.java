@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns the ledger and the loot history into JSON for the RuneScape profile config, and back.
+ * Turns the ledger, the loot history and the trip log into JSON for the RuneScape profile config, and back.
  * Bad or missing data loads as empty rather than failing the plugin.
  */
 public final class LootStateCodec
@@ -21,6 +21,9 @@ public final class LootStateCodec
 	{
 	}.getType();
 	private static final Type COUNTS_TYPE = new TypeToken<Map<Integer, Long>>()
+	{
+	}.getType();
+	private static final Type TRIPS_TYPE = new TypeToken<List<Long>>()
 	{
 	}.getType();
 
@@ -72,6 +75,28 @@ public final class LootStateCodec
 		catch (JsonParseException | IllegalStateException | ClassCastException e)
 		{
 			return new LootHistory();
+		}
+	}
+
+	public String writeTrips(TripLog trips)
+	{
+		return gson.toJson(trips.getEnds(), TRIPS_TYPE);
+	}
+
+	public TripLog readTrips(String json)
+	{
+		if (json == null || json.isEmpty())
+		{
+			return new TripLog();
+		}
+		try
+		{
+			List<Long> saved = gson.fromJson(json, TRIPS_TYPE);
+			return new TripLog(saved);
+		}
+		catch (JsonParseException | IllegalStateException | ClassCastException e)
+		{
+			return new TripLog();
 		}
 	}
 

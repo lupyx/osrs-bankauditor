@@ -59,6 +59,24 @@ public final class Formats
 	}
 
 	/**
+	 * How long something took: "under 1 min", "43 min", "2 h" or "1 h 5 min".
+	 */
+	public static String duration(long millis)
+	{
+		if (millis < MINUTE)
+		{
+			return "under 1 min";
+		}
+		long hours = millis / HOUR;
+		long minutes = millis % HOUR / MINUTE;
+		if (hours == 0)
+		{
+			return minutes + " min";
+		}
+		return minutes == 0 ? hours + " h" : hours + " h " + minutes + " min";
+	}
+
+	/**
 	 * Rough age of a timestamp: "just now", "5 min ago", "3 h ago", "2 days ago".
 	 */
 	public static String ago(long now, long then)

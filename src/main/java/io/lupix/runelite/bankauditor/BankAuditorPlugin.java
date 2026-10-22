@@ -11,6 +11,7 @@ import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.LootSourceType;
 import io.lupix.runelite.bankauditor.loot.LootStateCodec;
+import io.lupix.runelite.bankauditor.loot.TripLog;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.sell.KeepList;
 import io.lupix.runelite.bankauditor.sell.KeepRule;
@@ -124,7 +125,8 @@ public class BankAuditorPlugin extends Plugin
 	static final String KEY_LEDGER = "ledger";
 	static final String KEY_HISTORY = "history";
 	static final String KEY_BANK = "bankSnapshot";
-	private static final Set<String> STATE_KEYS = Set.of(KEY_LEDGER, KEY_HISTORY, KEY_BANK);
+	static final String KEY_TRIPS = "tripEnds";
+	private static final Set<String> STATE_KEYS = Set.of(KEY_LEDGER, KEY_HISTORY, KEY_BANK, KEY_TRIPS);
 
 	/**
 	 * Containers must have been still for this many ticks before the ledger trusts them.
@@ -207,6 +209,7 @@ public class BankAuditorPlugin extends Plugin
 	private LootStateCodec codec;
 	private LootLedger ledger = new LootLedger();
 	private LootHistory history = new LootHistory();
+	private TripLog trips = new TripLog();
 	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
 	private final GroundLootTracker groundLoot = new GroundLootTracker();
 	/**
@@ -286,6 +289,7 @@ public class BankAuditorPlugin extends Plugin
 
 	private boolean ledgerDirty;
 	private boolean historyDirty;
+	private boolean tripsDirty;
 	private boolean bankDirty;
 	private int lastSave;
 
@@ -363,6 +367,7 @@ public class BankAuditorPlugin extends Plugin
 			saveState(true);
 			ledger = new LootLedger();
 			history = new LootHistory();
+			trips = new TripLog();
 			bankCounts = null;
 			bankTrusted = false;
 			bankBeforeHiddenDeposit = null;
@@ -551,7 +556,27 @@ public class BankAuditorPlugin extends Plugin
 
 	private boolean pruneHistory(long now)
 	{
-		return history.prune(now, config.historyDays() * DAY_MILLIS, config.maxRecords());
+		boolean pruned = history.prune(now, config.historyDays() * DAY_MILLIS, config.maxRecords());
+		List<LootRecord> oldest = history.oldestFirst();
+		if (trips.prune(oldest.isEmpty() ? null : oldest.get(0).getTimestamp()))
+		{
+			tripsDirty = true;
+		}
+		return pruned;
+	}
+
+	/**
+	 * Ends the loot trip that is going, if it has any drops, so the next drop starts a new one. Banking does
+	 * this, and so does the End trip button.
+	 */
+	private void endTrip()
+	{
+		List<LootRecord> newest = history.newestFirst();
+		if (trips.end(System.currentTimeMillis(), newest.isEmpty() ? null : newest.get(0).getTimestamp()))
+		{
+			tripsDirty = true;
+			panelDirty = true;
+		}
 	}
 
 	// ------------------------------------------------------------------
@@ -892,6 +917,10 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onWidgetLoaded(WidgetLoaded event)
 	{
+		if (event.getGroupId() == InterfaceID.BANKMAIN || event.getGroupId() == InterfaceID.BANK_DEPOSITBOX)
+		{
+			endTrip();
+		}
 		if (event.getGroupId() == InterfaceID.BANKMAIN)
 		{
 			if (visitEnding)
@@ -1288,7 +1317,12 @@ public class BankAuditorPlugin extends Plugin
 		}
 		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, spriteManager, sourceIcons(), () -> clientThread.invokeLater(this::clearLootData),
 			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()),
-			LootGroups.Interval.fromName(config.lootTimeRange()), i -> config.setLootTimeRange(i.name()));
+			LootGroups.Interval.fromName(config.lootTimeRange()), i -> config.setLootTimeRange(i.name()),
+			() -> clientThread.invokeLater(() ->
+			{
+				endTrip();
+				refreshPanel();
+			}));
 		newPanel.setOnActivate(() -> clientThread.invokeLater(this::refreshPanel));
 		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		navButton = NavigationButton.builder()
@@ -1329,10 +1363,11 @@ public class BankAuditorPlugin extends Plugin
 		ValueTiers tiers = valueTiers();
 		Map<Integer, ItemValue> values = itemValues(newest);
 		boolean bestValueOnly = config.bestValueOnly();
+		TripLog tripsNow = new TripLog(trips.getEnds());
 
 		SwingUtilities.invokeLater(() ->
 		{
-			target.showLoot(newest, now, tiers, values, bestValueOnly);
+			target.showLoot(newest, now, tiers, values, bestValueOnly, tripsNow);
 			target.showSellList(sell, bankSeen, tagEnabled);
 		});
 	}
@@ -1385,9 +1420,11 @@ public class BankAuditorPlugin extends Plugin
 	{
 		ledger.clear();
 		history.clear();
+		trips.clear();
 		groundLoot.clear();
 		ledgerDirty = true;
 		historyDirty = true;
+		tripsDirty = true;
 		clearCaches();
 		saveState(true);
 		refreshPanel();
@@ -1542,15 +1579,18 @@ public class BankAuditorPlugin extends Plugin
 		{
 			ledger = new LootLedger();
 			history = new LootHistory();
+			trips = new TripLog();
 			bankCounts = null;
 		}
 		else
 		{
 			ledger = codec.readLedger(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_LEDGER));
 			history = codec.readHistory(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_HISTORY));
+			trips = codec.readTrips(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_TRIPS));
 			bankCounts = codec.readCounts(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_BANK));
 		}
 		ledgerDirty = false;
+		tripsDirty = false;
 		historyDirty = pruneHistory(System.currentTimeMillis());
 		bankDirty = false;
 		bankTrusted = false;
@@ -1585,6 +1625,11 @@ public class BankAuditorPlugin extends Plugin
 		{
 			configManager.setConfiguration(BankAuditorConfig.GROUP, profileKey, KEY_HISTORY, codec.writeHistory(history));
 			historyDirty = false;
+		}
+		if (everything || tripsDirty)
+		{
+			configManager.setConfiguration(BankAuditorConfig.GROUP, profileKey, KEY_TRIPS, codec.writeTrips(trips));
+			tripsDirty = false;
 		}
 		if ((everything || bankDirty) && bankCounts != null)
 		{

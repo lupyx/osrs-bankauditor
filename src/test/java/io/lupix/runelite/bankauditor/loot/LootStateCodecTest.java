@@ -66,6 +66,15 @@ public class LootStateCodecTest
 	}
 
 	@Test
+	public void tripsRoundTrip()
+	{
+		TripLog trips = new TripLog(Arrays.asList(1000L, 5000L));
+		assertEquals(Arrays.asList(1000L, 5000L), codec.readTrips(codec.writeTrips(trips)).getEnds());
+		assertEquals(0, codec.readTrips(null).getEnds().size());
+		assertEquals(0, codec.readTrips("{not json").getEnds().size());
+	}
+
+	@Test
 	public void badDataLoadsEmpty()
 	{
 		assertEquals(0, codec.readLedger("{not json").size());

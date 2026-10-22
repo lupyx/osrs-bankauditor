@@ -4,6 +4,7 @@ import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.LootSourceType;
+import io.lupix.runelite.bankauditor.loot.TripLog;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -21,7 +22,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Combines loot records into one box per location, source or stretch of time for the side panel.
+ * Combines loot records into one box per location, source, stretch of time or trip for the side panel.
  */
 public final class LootGroups
 {
@@ -30,7 +31,8 @@ public final class LootGroups
 		DEFAULT("Default", "view_list.png", "Every drop on its own"),
 		LOCATION("Location", "view_location.png", "Combine drops from the same area on any world"),
 		SOURCE("Source", "view_source.png", "Combine drops from the same NPC or source"),
-		TIME("Time range", "view_day.png", "Combine drops by hour, day, week or month");
+		TIME("Time range", "view_day.png", "Combine drops by hour, day, week or month"),
+		TRIP("Trip", "view_trip.png", "Combine drops into trips, which end when you bank");
 
 		private final String label;
 		private final String icon;
@@ -128,6 +130,11 @@ public final class LootGroups
 	private static final DateTimeFormatter SHORT_DAY_FORMAT = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH);
 	private static final DateTimeFormatter DAY_MONTH_FORMAT = DateTimeFormatter.ofPattern("d MMMM", Locale.ENGLISH);
 	private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("MMMM", Locale.ENGLISH);
+	private static final DateTimeFormatter CLOCK_FORMAT = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH);
+	/**
+	 * Key of the trip that is still going.
+	 */
+	static final String CURRENT_TRIP = "-1";
 
 	private LootGroups()
 	{
@@ -257,6 +264,7 @@ public final class LootGroups
 		private final String title;
 		private String detail;
 		private int drops;
+		private long oldest = Long.MAX_VALUE;
 		private long newest = Long.MIN_VALUE;
 		private long totalValue;
 		private final Map<Long, Line> lines = new LinkedHashMap<>();
@@ -285,6 +293,14 @@ public final class LootGroups
 		public int getDrops()
 		{
 			return drops;
+		}
+
+		/**
+		 * Timestamp of the first drop in the group.
+		 */
+		public long getOldest()
+		{
+			return oldest;
 		}
 
 		/**
@@ -327,9 +343,10 @@ public final class LootGroups
 	/**
 	 * @param records any order
 	 * @param mode    anything but {@link Mode#DEFAULT}, which shows records as they are
+	 * @param trips   where trips ended, for {@link Mode#TRIP}
 	 * @return groups with the most recent drop first
 	 */
-	public static List<Group> group(List<LootRecord> records, Mode mode, Interval interval, ZoneId zone)
+	public static List<Group> group(List<LootRecord> records, Mode mode, Interval interval, TripLog trips, ZoneId zone)
 	{
 		Function<LootRecord, String> key;
 		Function<LootRecord, String> other;
@@ -351,6 +368,11 @@ public final class LootGroups
 				other = LootRecord::getSource;
 				joiner = " from ";
 				break;
+			case TRIP:
+				key = r -> String.valueOf(trips.tripEnd(r.getTimestamp()));
+				other = LootRecord::getSource;
+				joiner = " from ";
+				break;
 			default:
 				throw new IllegalArgumentException("Nothing to group by in " + mode);
 		}
@@ -360,6 +382,7 @@ public final class LootGroups
 		{
 			Group group = groups.computeIfAbsent(key.apply(record), Group::new);
 			group.drops++;
+			group.oldest = Math.min(group.oldest, record.getTimestamp());
 			group.newest = Math.max(group.newest, record.getTimestamp());
 			group.others.merge(other.apply(record), 1, Integer::sum);
 			group.sources.merge(record.getSource(), 1, Integer::sum);
@@ -438,16 +461,7 @@ public final class LootGroups
 			{
 				int t = period.indexOf('T');
 				LocalDate date = LocalDate.parse(period.substring(0, t));
-				String hour = period.substring(t + 1) + ":00";
-				if (date.equals(today))
-				{
-					return "Today " + hour;
-				}
-				if (date.equals(today.minusDays(1)))
-				{
-					return "Yesterday " + hour;
-				}
-				return withYear(SHORT_DAY_FORMAT.format(date), date, today) + " " + hour;
+				return dayAndTime(date, period.substring(t + 1) + ":00", today);
 			}
 			case WEEK:
 			{
@@ -491,6 +505,33 @@ public final class LootGroups
 				return withYear(DAY_FORMAT.format(date), date, today);
 			}
 		}
+	}
+
+	/**
+	 * A trip's title: "Current trip" for the one still going, or when it started, like "Today 17:05".
+	 */
+	public static String tripTitle(Group group, long now, ZoneId zone)
+	{
+		if (CURRENT_TRIP.equals(group.getTitle()))
+		{
+			return "Current trip";
+		}
+		ZonedDateTime start = Instant.ofEpochMilli(group.getOldest()).atZone(zone);
+		LocalDate today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
+		return dayAndTime(start.toLocalDate(), CLOCK_FORMAT.format(start), today);
+	}
+
+	private static String dayAndTime(LocalDate date, String time, LocalDate today)
+	{
+		if (date.equals(today))
+		{
+			return "Today " + time;
+		}
+		if (date.equals(today.minusDays(1)))
+		{
+			return "Yesterday " + time;
+		}
+		return withYear(SHORT_DAY_FORMAT.format(date), date, today) + " " + time;
 	}
 
 	private static String withYear(String title, LocalDate date, LocalDate today)

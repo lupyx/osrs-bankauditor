@@ -90,7 +90,9 @@ public class BankAuditorOverlay extends WidgetItemOverlay
 
 		Rectangle bounds = widgetItem.getCanvasBounds();
 		boolean highlight = item.isSellable()
-			&& (place == Place.GE_INVENTORY ? config.highlightAtGrandExchange() : config.highlightSellableInBank());
+			&& (place == Place.GE_INVENTORY ? config.highlightAtGrandExchange()
+			: place == Place.BANK_INVENTORY ? config.highlightSellableInInventory()
+			: config.highlightSellableInBank());
 		if (highlight)
 		{
 			drawHighlight(graphics, widgetItem, bounds);
