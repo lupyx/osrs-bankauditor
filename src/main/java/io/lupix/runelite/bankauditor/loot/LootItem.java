@@ -19,13 +19,24 @@ public final class LootItem
 	 */
 	@SerializedName("p")
 	private final long price;
+	/**
+	 * How many were left on the floor and never picked up. Missing (0) in data saved before this existed.
+	 */
+	@SerializedName("u")
+	private final long left;
 
 	public LootItem(int id, String name, long quantity, long price)
+	{
+		this(id, name, quantity, price, 0);
+	}
+
+	public LootItem(int id, String name, long quantity, long price, long left)
 	{
 		this.id = id;
 		this.name = name;
 		this.quantity = quantity;
 		this.price = price;
+		this.left = Math.max(0, Math.min(quantity, left));
 	}
 
 	public int getId()
@@ -53,6 +64,30 @@ public final class LootItem
 		return price * quantity;
 	}
 
+	/**
+	 * How many of these were left on the floor.
+	 */
+	public long getLeft()
+	{
+		return Math.max(0, Math.min(quantity, left));
+	}
+
+	/**
+	 * How many were actually picked up, or are still on the floor waiting.
+	 */
+	public long getKept()
+	{
+		return quantity - getLeft();
+	}
+
+	/**
+	 * A copy with {@code more} added to the amount left on the floor.
+	 */
+	public LootItem withMoreLeft(long more)
+	{
+		return new LootItem(id, name, quantity, price, getLeft() + more);
+	}
+
 	@Override
 	public boolean equals(Object o)
 	{
@@ -65,13 +100,14 @@ public final class LootItem
 			return false;
 		}
 		LootItem other = (LootItem) o;
-		return id == other.id && quantity == other.quantity && price == other.price && Objects.equals(name, other.name);
+		return id == other.id && quantity == other.quantity && price == other.price && getLeft() == other.getLeft()
+			&& Objects.equals(name, other.name);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(id, name, quantity, price);
+		return Objects.hash(id, name, quantity, price, getLeft());
 	}
 
 	@Override

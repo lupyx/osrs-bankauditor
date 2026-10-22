@@ -131,4 +131,21 @@ public class LootGroupsTest
 		assertEquals(LootGroups.Mode.DEFAULT, LootGroups.Mode.fromName(null));
 		assertEquals(Collections.emptyList(), LootGroups.group(Collections.emptyList(), LootGroups.Mode.DAY, ZONE));
 	}
+
+	@Test
+	public void leftOnTheFloorGetsItsOwnLineAndDoesNotCount()
+	{
+		List<LootRecord> records = Arrays.asList(
+			drop(1, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 10, 200, 4)),
+			drop(2, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 5, 200, 0)));
+
+		LootGroups.Group group = LootGroups.group(records, LootGroups.Mode.SOURCE, ZONE).get(0);
+
+		assertEquals(2, group.getLines().size());
+		assertEquals(11, group.getLines().get(0).getQuantity());
+		assertEquals(false, group.getLines().get(0).isLeft());
+		assertEquals(4, group.getLines().get(1).getQuantity());
+		assertEquals(true, group.getLines().get(1).isLeft());
+		assertEquals(11 * 200, group.getTotalValue());
+	}
 }

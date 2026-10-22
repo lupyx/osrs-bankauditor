@@ -75,6 +75,9 @@ public final class LootRecord
 		return items == null ? Collections.emptyList() : Collections.unmodifiableList(items);
 	}
 
+	/**
+	 * How many of the item this drop gave, not counting any left on the floor.
+	 */
 	public long quantityOf(int itemId)
 	{
 		long total = 0;
@@ -82,20 +85,48 @@ public final class LootRecord
 		{
 			if (item.getId() == itemId)
 			{
-				total += item.getQuantity();
+				total += item.getKept();
 			}
 		}
 		return total;
 	}
 
+	/**
+	 * Value of what was kept, so items left on the floor don't count.
+	 */
 	public long getTotalValue()
 	{
 		long total = 0;
 		for (LootItem item : getItems())
 		{
-			total += item.getValue();
+			total += item.getPrice() * item.getKept();
 		}
 		return total;
+	}
+
+	/**
+	 * A copy with up to {@code quantity} more of the item marked as left on the floor, or this record when
+	 * none of it is left to mark.
+	 */
+	public LootRecord withLeft(int itemId, long quantity)
+	{
+		List<LootItem> updated = new ArrayList<>(getItems());
+		long remaining = quantity;
+		for (int i = 0; i < updated.size() && remaining > 0; i++)
+		{
+			LootItem item = updated.get(i);
+			if (item.getId() == itemId && item.getKept() > 0)
+			{
+				long mark = Math.min(remaining, item.getKept());
+				updated.set(i, item.withMoreLeft(mark));
+				remaining -= mark;
+			}
+		}
+		if (remaining == quantity)
+		{
+			return this;
+		}
+		return new LootRecord(timestamp, source, type, combatLevel, location, updated);
 	}
 
 	/**

@@ -63,6 +63,22 @@ public final class LootHistory
 		return records.size() != before;
 	}
 
+	/**
+	 * Puts {@code updated} where {@code old} is, matched by identity. Does nothing when {@code old} has
+	 * already been pruned.
+	 */
+	public void replace(LootRecord old, LootRecord updated)
+	{
+		for (int i = 0; i < records.size(); i++)
+		{
+			if (records.get(i) == old)
+			{
+				records.set(i, updated);
+				return;
+			}
+		}
+	}
+
 	public void clear()
 	{
 		records.clear();

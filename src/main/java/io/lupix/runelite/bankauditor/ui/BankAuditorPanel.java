@@ -9,6 +9,7 @@ import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
@@ -585,9 +586,9 @@ public class BankAuditorPanel extends PluginPanel
 		List<LootGroups.Line> lines = new ArrayList<>();
 		for (LootItem item : record.getItems())
 		{
-			lines.add(LootGroups.Line.of(item));
+			lines.addAll(LootGroups.Line.of(item));
 		}
-		lines.sort(Comparator.comparingLong(LootGroups.Line::getValue).reversed());
+		lines.sort(LootGroups.Line.ORDER);
 		// The title is also where an area named after the boss shows, like Vorkath at Vorkath
 		String key = "drop:" + record.getTimestamp() + ":" + record.getSource();
 		return dropBox(key, record.describeSource(), matchSource || matchLocation, icons.spriteFor(record.getSource(), record.getType()),
@@ -651,10 +652,17 @@ public class BankAuditorPanel extends PluginPanel
 		text.add(top);
 
 		long haTotal = 0;
+		boolean anyLeft = false;
 		for (LootGroups.Line line : lines)
 		{
+			if (line.isLeft())
+			{
+				anyLeft = true;
+				continue;
+			}
 			haTotal += ItemValue.haValue(line.getId(), line.getQuantity(), itemValues.get(line.getId()));
 		}
+		String notLeft = anyLeft ? ", not counting what was left on the floor" : "";
 		JPanel bottom = new JPanel(new BorderLayout(4, 0));
 		bottom.setOpaque(false);
 		bottom.add(subtitle != null ? subtitle : new JLabel(), BorderLayout.CENTER);
@@ -662,10 +670,10 @@ public class BankAuditorPanel extends PluginPanel
 		totals.setOpaque(false);
 		JLabel geTotal = valueLabel(GE_ICON, Formats.compact(totalValue), totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
 		String count = lines.size() == 1 ? "the 1 item" : "all " + lines.size() + " items";
-		geTotal.setToolTipText("Grand Exchange value of " + count + ": " + Formats.commas(totalValue) + " gp");
+		geTotal.setToolTipText("Grand Exchange value of " + count + ": " + Formats.commas(totalValue) + " gp" + notLeft);
 		totals.add(geTotal);
 		JLabel haTotalLabel = valueLabel(HA_ICON, Formats.compact(haTotal), ColorScheme.GRAND_EXCHANGE_ALCH);
-		haTotalLabel.setToolTipText("High alchemy value of " + count + ": " + Formats.commas(haTotal) + " gp");
+		haTotalLabel.setToolTipText("High alchemy value of " + count + ": " + Formats.commas(haTotal) + " gp" + notLeft);
 		totals.add(haTotalLabel);
 		bottom.add(totals, BorderLayout.EAST);
 		text.add(bottom);
@@ -748,7 +756,8 @@ public class BankAuditorPanel extends PluginPanel
 	private JPanel itemRow(LootGroups.Line line, boolean odd)
 	{
 		Color background = odd ? ROW_ALT_COLOR : ColorScheme.DARKER_GRAY_COLOR;
-		Color tier = tiers.colorFor(line.getValue());
+		boolean left = line.isLeft();
+		Color tier = left ? null : tiers.colorFor(line.getValue());
 		ItemValue value = itemValues.get(line.getId());
 
 		JPanel row = new JPanel(new BorderLayout(6, 0));
@@ -756,7 +765,7 @@ public class BankAuditorPanel extends PluginPanel
 		row.setBorder(new EmptyBorder(1, 4, 1, 6));
 		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, ITEM_ICON_HEIGHT + 2));
 
-		JLabel icon = new JLabel();
+		JLabel icon = left ? new FadedLabel() : new JLabel();
 		icon.setPreferredSize(new Dimension(ITEM_ICON_WIDTH, ITEM_ICON_HEIGHT));
 		int quantity = (int) Math.min(Integer.MAX_VALUE, line.getQuantity());
 		itemManager.getImage(line.getId(), quantity, line.getQuantity() > 1).addTo(icon);
@@ -764,12 +773,23 @@ public class BankAuditorPanel extends PluginPanel
 
 		JPanel text = new JPanel(new GridLayout(2, 1));
 		text.setOpaque(false);
-		JLabel name = smallLabel(line.getName(), tier != null ? tier : Color.WHITE);
+		JLabel name = smallLabel(line.getName(), left ? ColorScheme.MEDIUM_GRAY_COLOR : tier != null ? tier : Color.WHITE);
 		highlight(name, line.getName(), matchItem);
-		name.setToolTipText(line.getName());
+		name.setToolTipText(left ? "Not picked up" : line.getName());
 		text.add(name);
-		text.add(smallLabel("x " + Formats.commas(line.getQuantity()), ColorScheme.LIGHT_GRAY_COLOR));
+		JLabel amount = smallLabel("x " + Formats.commas(line.getQuantity()) + (left ? ", not picked up" : ""),
+			left ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
+		if (left)
+		{
+			amount.setToolTipText("Not picked up");
+		}
+		text.add(amount);
 		row.add(text, BorderLayout.CENTER);
+		if (left)
+		{
+			row.setToolTipText("Not picked up");
+			icon.setToolTipText("Not picked up");
+		}
 
 		// Coins are already gold, so their amount says it all
 		if (line.getId() != ItemValue.COINS)
@@ -777,8 +797,17 @@ public class BankAuditorPanel extends PluginPanel
 			JPanel values = new JPanel(new GridLayout(2, 1));
 			values.setOpaque(false);
 			values.setPreferredSize(new Dimension(VALUE_COLUMN_WIDTH, ITEM_ICON_HEIGHT));
-			values.add(geValue(line, value, tier));
-			values.add(haValue(line, value));
+			JLabel ge = geValue(line, value, tier);
+			JLabel ha = haValue(line, value);
+			if (left)
+			{
+				ge.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+				ha.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+				ge.setToolTipText("Not picked up. " + ge.getToolTipText());
+				ha.setToolTipText("Not picked up. " + ha.getToolTipText());
+			}
+			values.add(ge);
+			values.add(ha);
 			row.add(values, BorderLayout.EAST);
 		}
 		return row;
@@ -899,6 +928,21 @@ public class BankAuditorPanel extends PluginPanel
 		if (html != null)
 		{
 			label.setText(html);
+		}
+	}
+
+	/**
+	 * Paints its icon see-through, for items that were left on the floor.
+	 */
+	private static final class FadedLabel extends JLabel
+	{
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			Graphics2D g2 = (Graphics2D) g.create();
+			g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+			super.paintComponent(g2);
+			g2.dispose();
 		}
 	}
 

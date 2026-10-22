@@ -85,27 +85,58 @@ public final class LootGroups
 	}
 
 	/**
-	 * One item summed over every drop in a group.
+	 * One item summed over every drop in a group. What was left on the floor gets a line of its own.
 	 */
 	public static final class Line
 	{
+		/**
+		 * Kept lines first, most valuable first, then by quantity.
+		 */
+		static final Comparator<Line> ORDER = Comparator.comparing(Line::isLeft)
+			.thenComparing(Comparator.comparingLong(Line::getValue).reversed())
+			.thenComparing(Comparator.comparingLong(Line::getQuantity).reversed());
+
 		private final int id;
 		private final String name;
+		private final boolean left;
 		private long quantity;
 		private long value;
 
-		Line(int id, String name)
+		Line(int id, String name, boolean left)
 		{
 			this.id = id;
 			this.name = name;
+			this.left = left;
 		}
 
-		static Line of(LootItem item)
+		/**
+		 * The item as one line, or two when part of it was left on the floor.
+		 */
+		static List<Line> of(LootItem item)
 		{
-			Line line = new Line(item.getId(), item.getName());
-			line.quantity = item.getQuantity();
-			line.value = item.getValue();
+			List<Line> lines = new ArrayList<>(2);
+			if (item.getKept() > 0)
+			{
+				lines.add(part(item, false, item.getKept()));
+			}
+			if (item.getLeft() > 0)
+			{
+				lines.add(part(item, true, item.getLeft()));
+			}
+			return lines;
+		}
+
+		private static Line part(LootItem item, boolean left, long quantity)
+		{
+			Line line = new Line(item.getId(), item.getName(), left);
+			line.quantity = quantity;
+			line.value = item.getPrice() * quantity;
 			return line;
+		}
+
+		private long key()
+		{
+			return (long) id << 1 | (left ? 1 : 0);
 		}
 
 		public int getId()
@@ -124,6 +155,14 @@ public final class LootGroups
 		}
 
 		/**
+		 * Whether this is the part that was dropped but never picked up.
+		 */
+		public boolean isLeft()
+		{
+			return left;
+		}
+
+		/**
 		 * Value at the prices each drop had when it was looted.
 		 */
 		public long getValue()
@@ -139,7 +178,7 @@ public final class LootGroups
 		private int drops;
 		private long newest = Long.MIN_VALUE;
 		private long totalValue;
-		private final Map<Integer, Line> lines = new LinkedHashMap<>();
+		private final Map<Long, Line> lines = new LinkedHashMap<>();
 		private final Map<String, Integer> others = new LinkedHashMap<>();
 		private final Map<String, Integer> sources = new LinkedHashMap<>();
 		private final Map<String, LootSourceType> sourceTypes = new LinkedHashMap<>();
@@ -194,13 +233,12 @@ public final class LootGroups
 		}
 
 		/**
-		 * Most valuable first, then by quantity.
+		 * Kept items first, most valuable first, then what was left on the floor.
 		 */
 		public List<Line> getLines()
 		{
 			List<Line> sorted = new ArrayList<>(lines.values());
-			sorted.sort(Comparator.comparingLong(Line::getValue).reversed()
-				.thenComparing(Comparator.comparingLong(Line::getQuantity).reversed()));
+			sorted.sort(Line.ORDER);
 			return sorted;
 		}
 	}
@@ -247,10 +285,16 @@ public final class LootGroups
 			group.sourceTypes.putIfAbsent(record.getSource(), record.getType());
 			for (LootItem item : record.getItems())
 			{
-				Line line = group.lines.computeIfAbsent(item.getId(), id -> new Line(id, item.getName()));
-				line.quantity += item.getQuantity();
-				line.value += item.getValue();
-				group.totalValue += item.getValue();
+				for (Line part : Line.of(item))
+				{
+					Line line = group.lines.computeIfAbsent(part.key(), k -> new Line(part.id, part.name, part.left));
+					line.quantity += part.quantity;
+					line.value += part.value;
+					if (!part.left)
+					{
+						group.totalValue += part.value;
+					}
+				}
 			}
 		}
 

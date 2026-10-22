@@ -2,6 +2,7 @@ package io.lupix.runelite.bankauditor;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
+import io.lupix.runelite.bankauditor.loot.GroundLootTracker;
 import io.lupix.runelite.bankauditor.loot.LootAttribution;
 import io.lupix.runelite.bankauditor.loot.LootHistory;
 import io.lupix.runelite.bankauditor.loot.LootItem;
@@ -54,6 +55,8 @@ import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
+import net.runelite.api.Tile;
+import net.runelite.api.TileItem;
 import net.runelite.api.WorldEntity;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
@@ -63,6 +66,8 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.ItemDespawned;
+import net.runelite.api.events.ItemSpawned;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.VarClientIntChanged;
@@ -199,6 +204,7 @@ public class BankAuditorPlugin extends Plugin
 	private LootLedger ledger = new LootLedger();
 	private LootHistory history = new LootHistory();
 	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
+	private final GroundLootTracker groundLoot = new GroundLootTracker();
 	/**
 	 * Canonical item id to quantity as of the last time the bank was open. Null until the bank has been seen.
 	 */
@@ -338,6 +344,7 @@ public class BankAuditorPlugin extends Plugin
 	@Override
 	protected void shutDown()
 	{
+		groundLoot.clear();
 		overlayManager.remove(overlay);
 		removePanel();
 		unregisterTag();
@@ -475,7 +482,12 @@ public class BankAuditorPlugin extends Plugin
 		}
 
 		long now = System.currentTimeMillis();
-		history.add(new LootRecord(now, source, type, combatLevel, currentLocation(), items));
+		LootRecord record = new LootRecord(now, source, type, combatLevel, currentLocation(), items);
+		history.add(record);
+		if (groundDrop)
+		{
+			groundLoot.dropRecorded(record, client.getTickCount());
+		}
 		pruneHistory(now);
 
 		ledgerDirty = true;
@@ -577,8 +589,83 @@ public class BankAuditorPlugin extends Plugin
 	}
 
 	@Subscribe
+	public void onItemSpawned(ItemSpawned event)
+	{
+		TileItem item = event.getItem();
+		if (item.getOwnership() != TileItem.OWNERSHIP_SELF)
+		{
+			return;
+		}
+		groundLoot.spawned(item, itemManager.canonicalize(item.getId()), item.getQuantity(), tilePoint(event.getTile()),
+			item.getVisibleTime(), item.getDespawnTime(), client.getTickCount());
+	}
+
+	@Subscribe
+	public void onItemDespawned(ItemDespawned event)
+	{
+		GroundLootTracker.Left left = groundLoot.despawned(event.getItem(), client.getTickCount());
+		if (left != null)
+		{
+			markLeft(left);
+		}
+	}
+
+	private static long tilePoint(Tile tile)
+	{
+		WorldPoint point = tile.getWorldLocation();
+		return GroundLootTracker.point(point.getX(), point.getY(), point.getPlane());
+	}
+
+	/**
+	 * Notes in the history that some loot stayed on the floor. Only the side panel shows this; the loot count
+	 * catches up at the next bank visit like it always does.
+	 */
+	private void markLeft(GroundLootTracker.Left left)
+	{
+		LootRecord record = left.getRecord();
+		LootRecord updated = record.withLeft(left.getItemId(), left.getQuantity());
+		if (updated == record)
+		{
+			return;
+		}
+		history.replace(record, updated);
+		groundLoot.replace(record, updated);
+		historyDirty = true;
+		panelDirty = true;
+		clearCaches();
+	}
+
+	/**
+	 * Clicks that pick an item up from the floor, so a pile that vanished once other players could see it
+	 * is known to be ours.
+	 */
+	private void groundItemClicked(MenuOptionClicked event)
+	{
+		MenuAction action = event.getMenuAction();
+		boolean groundOption = action == MenuAction.GROUND_ITEM_FIRST_OPTION || action == MenuAction.GROUND_ITEM_SECOND_OPTION
+			|| action == MenuAction.GROUND_ITEM_THIRD_OPTION || action == MenuAction.GROUND_ITEM_FOURTH_OPTION
+			|| action == MenuAction.GROUND_ITEM_FIFTH_OPTION;
+		boolean take = groundOption && event.getMenuOption() != null && "Take".equals(Text.removeTags(event.getMenuOption()));
+		if (!take && action != MenuAction.WIDGET_TARGET_ON_GROUND_ITEM)
+		{
+			return;
+		}
+		WorldView view = client.getTopLevelWorldView();
+		int x = event.getParam0();
+		int y = event.getParam1();
+		Tile[][][] tiles = view.getScene().getTiles();
+		int plane = view.getPlane();
+		if (x < 0 || y < 0 || x >= tiles[plane].length || y >= tiles[plane][x].length || tiles[plane][x][y] == null)
+		{
+			return;
+		}
+		groundLoot.takeClicked(itemManager.canonicalize(event.getId()), tilePoint(tiles[plane][x][y]));
+	}
+
+	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
+		groundItemClicked(event);
 		if (!bankOpen || event.getMenuOption() == null)
 		{
 			return;
@@ -802,6 +889,10 @@ public class BankAuditorPlugin extends Plugin
 	public void onGameTick(GameTick event)
 	{
 		checkBankCloseRace();
+		for (GroundLootTracker.Left left : groundLoot.tick(client.getTickCount()))
+		{
+			markLeft(left);
+		}
 		tickCounter++;
 		// Tooltips say "5 min ago", and prices change, so rebuild them now and then
 		clearCaches();
@@ -1225,6 +1316,7 @@ public class BankAuditorPlugin extends Plugin
 	{
 		ledger.clear();
 		history.clear();
+		groundLoot.clear();
 		ledgerDirty = true;
 		historyDirty = true;
 		clearCaches();
@@ -1297,6 +1389,13 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
+		GameState state = event.getGameState();
+		if (state == GameState.LOADING || state == GameState.HOPPING || state == GameState.LOGIN_SCREEN)
+		{
+			// Every pile on the floor vanishes with the old scene, without despawn events
+			groundLoot.sceneReloading();
+		}
+
 		if (event.getGameState() == GameState.LOGGED_IN)
 		{
 			switchProfile(configManager.getRSProfileKey());
@@ -1365,6 +1464,7 @@ public class BankAuditorPlugin extends Plugin
 		{
 			return;
 		}
+		groundLoot.clear();
 		saveState(false);
 
 		profileKey = newProfileKey;

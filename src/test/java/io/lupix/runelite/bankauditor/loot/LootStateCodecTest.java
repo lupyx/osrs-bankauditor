@@ -50,6 +50,22 @@ public class LootStateCodecTest
 	}
 
 	@Test
+	public void leftOnTheFloorIsSavedAndOldDataHasNone()
+	{
+		LootHistory history = new LootHistory();
+		history.add(new LootRecord(1000, "Vorkath", LootSourceType.NPC, 732, null,
+			Arrays.asList(new LootItem(1747, "Black dragonhide", 2, 3000, 1))));
+
+		LootHistory loaded = codec.readHistory(codec.writeHistory(history));
+		assertEquals(1, loaded.oldestFirst().get(0).getItems().get(0).getLeft());
+
+		LootHistory old = codec.readHistory("[{\"t\":1000,\"s\":\"Vorkath\",\"k\":\"NPC\",\"c\":732,"
+			+ "\"i\":[{\"id\":1747,\"n\":\"Black dragonhide\",\"q\":2,\"p\":3000}]}]");
+		assertEquals(0, old.oldestFirst().get(0).getItems().get(0).getLeft());
+		assertEquals(2, old.oldestFirst().get(0).quantityOf(1747));
+	}
+
+	@Test
 	public void badDataLoadsEmpty()
 	{
 		assertEquals(0, codec.readLedger("{not json").size());
