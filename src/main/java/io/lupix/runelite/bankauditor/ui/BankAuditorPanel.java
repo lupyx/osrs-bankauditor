@@ -9,6 +9,7 @@ import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
@@ -86,7 +87,7 @@ public class BankAuditorPanel extends PluginPanel
 	private static final ImageIcon HA_ICON = blankIcon();
 	private static final ImageIcon HA_OFF_ICON = blankIcon();
 	private static final int TOTAL_ICON_SIZE = 16;
-	private static final int TOTAL_COLUMN_WIDTH = 62;
+	private static final int TOTAL_GAP = 14;
 	private static final ImageIcon GE_TOTAL_ICON = blankIcon(TOTAL_ICON_SIZE);
 	private static final ImageIcon HA_TOTAL_ICON = blankIcon(TOTAL_ICON_SIZE);
 	private static final int MODE_BUTTON_SIZE = 20;
@@ -674,8 +675,8 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * A box with a header (source icon, title, the line under it and time) over a table of items with
-	 * their icons and values, and a footer with the GE and HA totals.
+	 * A box with a header (source icon, title, time, the line under it and the item count) over a table of
+	 * items with their icons and values, and a footer with the GE and HA totals.
 	 *
 	 * @param key stays the same across refreshes, to remember whether the box was expanded
 	 */
@@ -740,7 +741,11 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		text.add(top);
 
-		text.add(subtitle != null ? subtitle : new JLabel());
+		JPanel bottom = new JPanel(new BorderLayout(4, 0));
+		bottom.setOpaque(false);
+		bottom.add(subtitle != null ? subtitle : new JLabel(), BorderLayout.CENTER);
+		bottom.add(smallLabel(lines.size() == 1 ? "1 item" : lines.size() + " items", ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.EAST);
+		text.add(bottom);
 		header.add(text, BorderLayout.CENTER);
 		box.add(header, BorderLayout.NORTH);
 
@@ -767,29 +772,26 @@ public class BankAuditorPanel extends PluginPanel
 			items.add(expandRow(key, open ? "Show fewer items"
 				: "Show " + more + (more == 1 ? " more item" : " more items")));
 		}
-		items.add(totalsRow(lines.size(), geTotal, haTotal));
+		items.add(totalsRow(geTotal, haTotal));
 		box.add(items, BorderLayout.CENTER);
 		return box;
 	}
 
 	/**
-	 * The footer: how many items, and the GE and HA totals in a bigger font than the item values.
+	 * The footer: the GE and HA totals side by side in the middle, in a bigger font than the item values.
 	 */
-	private JPanel totalsRow(int count, long geTotal, long haTotal)
+	private JPanel totalsRow(long geTotal, long haTotal)
 	{
 		JPanel row = new JPanel(new BorderLayout(6, 0));
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setBorder(BorderFactory.createCompoundBorder(
 			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.DARK_GRAY_COLOR),
 			new EmptyBorder(4, 6, 4, 6)));
-		row.add(smallLabel(count == 1 ? "1 item" : count + " items", ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
-
-		JPanel values = new JPanel(new GridLayout(2, 1, 0, 2));
+		JPanel values = new JPanel(new FlowLayout(FlowLayout.CENTER, TOTAL_GAP, 0));
 		values.setOpaque(false);
 		values.add(totalLabel(GE_TOTAL_ICON, geTotal, ColorScheme.GRAND_EXCHANGE_PRICE, "GE total"));
 		values.add(totalLabel(HA_TOTAL_ICON, haTotal, ColorScheme.GRAND_EXCHANGE_ALCH, "HA total"));
-		values.setPreferredSize(new Dimension(TOTAL_COLUMN_WIDTH, values.getPreferredSize().height));
-		row.add(values, BorderLayout.EAST);
+		row.add(values, BorderLayout.CENTER);
 		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		return row;
 	}
@@ -850,7 +852,7 @@ public class BankAuditorPanel extends PluginPanel
 		Color tier = left || alched ? null : tiers.colorFor(line.getValue());
 		ItemValue value = itemValues.get(line.getId());
 		String note = left ? "Not picked up"
-			: alched ? "High alched for " + Formats.compact(line.getAlchPrice()) + (line.getQuantity() > 1 ? " each" : "")
+			: alched ? "High alched for " + Formats.commas(line.getAlchPrice()) + " gp" + (line.getQuantity() > 1 ? " each" : "")
 			: null;
 
 		JPanel row = new JPanel(new BorderLayout(6, 0));
@@ -888,7 +890,7 @@ public class BankAuditorPanel extends PluginPanel
 			if (alched)
 			{
 				JLabel gold = valueLabel(HA_ICON, Formats.compact(line.getValue()), ColorScheme.GRAND_EXCHANGE_ALCH);
-				gold.setToolTipText(note);
+				gold.setToolTipText(priceTip("HA", line.getValue()));
 				values.add(gold);
 				values.add(new JLabel());
 			}
@@ -921,7 +923,7 @@ public class BankAuditorPanel extends PluginPanel
 			return label;
 		}
 		JLabel label = valueLabel(GE_ICON, Formats.compact(line.getValue()), tier != null ? tier : ColorScheme.GRAND_EXCHANGE_PRICE);
-		label.setToolTipText(priceTip("GE", line.getValue(), line.getQuantity()));
+		label.setToolTipText(priceTip("GE", line.getValue()));
 		return label;
 	}
 
@@ -935,17 +937,16 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		long total = ItemValue.haValue(line.getId(), line.getQuantity(), value);
 		JLabel label = valueLabel(HA_ICON, Formats.compact(total), ColorScheme.GRAND_EXCHANGE_ALCH);
-		label.setToolTipText(priceTip("HA", total, line.getQuantity()));
+		label.setToolTipText(priceTip("HA", total));
 		return label;
 	}
 
 	/**
-	 * "GE 39K", or "GE 39K (19K each)" for a stack.
+	 * The exact value for a hover, like "GE: 39,512 gp".
 	 */
-	private static String priceTip(String kind, long total, long quantity)
+	private static String priceTip(String kind, long total)
 	{
-		String tip = kind + " " + Formats.compact(total);
-		return quantity > 1 ? tip + " (" + Formats.compact(total / quantity) + " each)" : tip;
+		return kind + ": " + Formats.commas(total) + " gp";
 	}
 
 	private static JLabel valueLabel(ImageIcon icon, String text, Color color)
@@ -957,7 +958,7 @@ public class BankAuditorPanel extends PluginPanel
 		return label;
 	}
 
-	private static JLabel totalLabel(ImageIcon icon, long total, Color color, String tooltip)
+	private static JLabel totalLabel(ImageIcon icon, long total, Color color, String kind)
 	{
 		JLabel label = new JLabel(Formats.compact(total));
 		label.setFont(FontManager.getRunescapeBoldFont());
@@ -965,7 +966,7 @@ public class BankAuditorPanel extends PluginPanel
 		label.setIcon(icon);
 		label.setIconTextGap(4);
 		label.setHorizontalAlignment(SwingConstants.LEFT);
-		label.setToolTipText(tooltip);
+		label.setToolTipText(priceTip(kind, total));
 		return label;
 	}
 
