@@ -16,6 +16,7 @@ import io.lupix.runelite.bankauditor.sell.KeepRule;
 import io.lupix.runelite.bankauditor.sell.SellableCalculator;
 import io.lupix.runelite.bankauditor.ui.BankAuditorOverlay;
 import io.lupix.runelite.bankauditor.ui.BankAuditorPanel;
+import io.lupix.runelite.bankauditor.ui.ItemValue;
 import io.lupix.runelite.bankauditor.ui.LootGroups;
 import io.lupix.runelite.bankauditor.ui.SourceIcons;
 import io.lupix.runelite.bankauditor.ui.TooltipText;
@@ -197,6 +198,7 @@ public class BankAuditorPlugin extends Plugin
 	private LootStateCodec codec;
 	private LootLedger ledger = new LootLedger();
 	private LootHistory history = new LootHistory();
+	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
 	/**
 	 * Canonical item id to quantity as of the last time the bank was open. Null until the bank has been seen.
 	 */
@@ -1166,12 +1168,33 @@ public class BankAuditorPlugin extends Plugin
 		boolean tagEnabled = config.sellableTag();
 		long now = System.currentTimeMillis();
 		ValueTiers tiers = valueTiers();
+		Map<Integer, ItemValue> values = itemValues(newest);
 
 		SwingUtilities.invokeLater(() ->
 		{
-			target.showLoot(newest, now, tiers);
+			target.showLoot(newest, now, tiers, values);
 			target.showSellList(sell, bankSeen, tagEnabled);
 		});
+	}
+
+	/**
+	 * Alch prices and tradeability for the panel, read from the item definitions. They don't change while
+	 * the client runs, so each item is only looked up once.
+	 */
+	private Map<Integer, ItemValue> itemValues(List<LootRecord> records)
+	{
+		for (LootRecord record : records)
+		{
+			for (LootItem item : record.getItems())
+			{
+				itemValueCache.computeIfAbsent(item.getId(), id ->
+				{
+					ItemComposition composition = itemManager.getItemComposition(id);
+					return new ItemValue(composition.getHaPrice(), composition.isTradeable());
+				});
+			}
+		}
+		return new HashMap<>(itemValueCache);
 	}
 
 	private ValueTiers valueTiers()

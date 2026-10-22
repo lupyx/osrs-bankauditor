@@ -5,8 +5,11 @@ import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.util.Formats;
 import java.awt.BorderLayout;
+import java.awt.AlphaComposite;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -17,8 +20,10 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import javax.swing.Box;
@@ -35,6 +40,8 @@ import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.SpriteID;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
@@ -43,6 +50,7 @@ import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.ui.components.IconTextField;
 import net.runelite.client.ui.components.materialtabs.MaterialTab;
 import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
+import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 
 /**
@@ -69,6 +77,12 @@ public class BankAuditorPanel extends PluginPanel
 	private static final int SOURCE_ICON_SIZE = 25;
 	private static final Color HEADER_COLOR = new Color(58, 54, 48);
 	private static final String HIGHLIGHT_COLOR = "#9a6400";
+	private static final int VALUE_ICON_SIZE = 12;
+	private static final int VALUE_COLUMN_WIDTH = 50;
+	private static final ImageIcon GE_ICON = blankIcon();
+	private static final ImageIcon GE_OFF_ICON = blankIcon();
+	private static final ImageIcon HA_ICON = blankIcon();
+	private static final ImageIcon HA_OFF_ICON = blankIcon();
 	private static final int MODE_BUTTON_SIZE = 20;
 	private static final int SEARCH_DELAY_MILLIS = 250;
 	private static final int ITEM_ICON_WIDTH = 36;
@@ -81,6 +95,11 @@ public class BankAuditorPanel extends PluginPanel
 	private final SourceIcons icons;
 	private final Map<Integer, ImageIcon> sprites = new HashMap<>();
 	private ValueTiers tiers = ValueTiers.NONE;
+	private Map<Integer, ItemValue> itemValues = Collections.emptyMap();
+	/**
+	 * Keys of the boxes whose full item list is showing.
+	 */
+	private final Set<String> expanded = new HashSet<>();
 	private final Runnable onClearLoot;
 	private final Consumer<LootGroups.Mode> onModeChange;
 	private LootGroups.Mode mode;
@@ -142,6 +161,7 @@ public class BankAuditorPanel extends PluginPanel
 
 		add(tabs, BorderLayout.NORTH);
 		add(display, BorderLayout.CENTER);
+		loadValueIcons();
 	}
 
 	/**
@@ -419,14 +439,16 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * @param records every loot record, newest first
-	 * @param tiers   colors for valuable stacks, or {@link ValueTiers#NONE}
+	 * @param records    every loot record, newest first
+	 * @param tiers      colors for valuable stacks, or {@link ValueTiers#NONE}
+	 * @param itemValues alch price and tradeability of every item in the records
 	 */
-	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers)
+	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers, Map<Integer, ItemValue> itemValues)
 	{
 		lootRecords = records;
 		lootNow = now;
 		this.tiers = tiers;
+		this.itemValues = itemValues;
 		renderLoot();
 	}
 
@@ -567,7 +589,8 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		lines.sort(Comparator.comparingLong(LootGroups.Line::getValue).reversed());
 		// The title is also where an area named after the boss shows, like Vorkath at Vorkath
-		return dropBox(record.describeSource(), matchSource || matchLocation, icons.spriteFor(record.getSource(), record.getType()),
+		String key = "drop:" + record.getTimestamp() + ":" + record.getSource();
+		return dropBox(key, record.describeSource(), matchSource || matchLocation, icons.spriteFor(record.getSource(), record.getType()),
 			Formats.ago(now, record.getTimestamp()), where, lines, record.getTotalValue());
 	}
 
@@ -578,15 +601,18 @@ public class BankAuditorPanel extends PluginPanel
 		detail.setToolTipText(group.getDetail());
 		String when = mode == LootGroups.Mode.DAY ? null : Formats.ago(lootNow, group.getNewest());
 		boolean titleSearched = mode == LootGroups.Mode.LOCATION ? matchLocation : mode == LootGroups.Mode.SOURCE && matchSource;
-		return dropBox(title, titleSearched, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
+		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
 			group.getLines(), group.getTotalValue());
 	}
 
 	/**
-	 * A box with a header (source icon, title, the line under it, time and total value) over a table of
-	 * items with their icons.
+	 * A box with a header (source icon, title, the line under it, time and totals) over a table of items
+	 * with their icons and values.
+	 *
+	 * @param key stays the same across refreshes, to remember whether the box was expanded
 	 */
-	private JPanel dropBox(String title, boolean titleSearched, int sprite, String when, JLabel subtitle, List<LootGroups.Line> lines, long totalValue)
+	private JPanel dropBox(String key, String title, boolean titleSearched, int sprite, String when, JLabel subtitle,
+		List<LootGroups.Line> lines, long totalValue)
 	{
 		JPanel box = new JPanel(new BorderLayout());
 		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -608,28 +634,42 @@ public class BankAuditorPanel extends PluginPanel
 
 		JPanel text = new JPanel(new GridLayout(2, 1, 0, 1));
 		text.setOpaque(false);
+
+		JPanel top = new JPanel(new BorderLayout(4, 0));
+		top.setOpaque(false);
 		JLabel name = new JLabel(title);
 		name.setFont(FontManager.getRunescapeBoldFont());
 		name.setForeground(Color.WHITE);
-		// Long names get cut with "..." instead of pushing the time and value out
+		// Long names get cut with "..." instead of pushing the time out
 		name.setToolTipText(title);
 		highlight(name, title, titleSearched);
-		text.add(name);
-		text.add(subtitle != null ? subtitle : new JLabel());
-		header.add(text, BorderLayout.CENTER);
+		top.add(name, BorderLayout.CENTER);
+		if (when != null)
+		{
+			top.add(smallLabel(when, ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.EAST);
+		}
+		text.add(top);
 
-		JPanel right = new JPanel(new GridLayout(2, 1, 0, 1));
-		right.setOpaque(false);
-		JLabel time = smallLabel(when != null ? when : "", ColorScheme.LIGHT_GRAY_COLOR);
-		time.setHorizontalAlignment(SwingConstants.RIGHT);
-		right.add(time);
-		JLabel total = smallLabel(totalValue > 0 ? Formats.compact(totalValue) + " gp" : "",
-			totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
-		total.setHorizontalAlignment(SwingConstants.RIGHT);
-		String count = lines.size() == 1 ? "1 item" : lines.size() + " items";
-		total.setToolTipText(totalValue > 0 ? count + ", " + Formats.commas(totalValue) + " gp" : count);
-		right.add(total);
-		header.add(right, BorderLayout.EAST);
+		long haTotal = 0;
+		for (LootGroups.Line line : lines)
+		{
+			haTotal += ItemValue.haValue(line.getId(), line.getQuantity(), itemValues.get(line.getId()));
+		}
+		JPanel bottom = new JPanel(new BorderLayout(4, 0));
+		bottom.setOpaque(false);
+		bottom.add(subtitle != null ? subtitle : new JLabel(), BorderLayout.CENTER);
+		JPanel totals = new JPanel(new GridLayout(1, 2, 4, 0));
+		totals.setOpaque(false);
+		JLabel geTotal = valueLabel(GE_ICON, Formats.compact(totalValue), totalColor != null ? totalColor : ColorScheme.GRAND_EXCHANGE_PRICE);
+		String count = lines.size() == 1 ? "the 1 item" : "all " + lines.size() + " items";
+		geTotal.setToolTipText("Grand Exchange value of " + count + ": " + Formats.commas(totalValue) + " gp");
+		totals.add(geTotal);
+		JLabel haTotalLabel = valueLabel(HA_ICON, Formats.compact(haTotal), ColorScheme.GRAND_EXCHANGE_ALCH);
+		haTotalLabel.setToolTipText("High alchemy value of " + count + ": " + Formats.commas(haTotal) + " gp");
+		totals.add(haTotalLabel);
+		bottom.add(totals, BorderLayout.EAST);
+		text.add(bottom);
+		header.add(text, BorderLayout.CENTER);
 		box.add(header, BorderLayout.NORTH);
 
 		JPanel items = new JPanel();
@@ -641,19 +681,17 @@ public class BankAuditorPanel extends PluginPanel
 			lines = new ArrayList<>(lines);
 			lines.sort(Comparator.comparing((LootGroups.Line l) -> !LootSearch.matches(l.getName(), query)));
 		}
-		List<LootGroups.Line> shown = lines.subList(0, Math.min(MAX_GROUP_LINES, lines.size()));
+		boolean open = expanded.contains(key);
+		List<LootGroups.Line> shown = open ? lines : lines.subList(0, Math.min(MAX_GROUP_LINES, lines.size()));
 		for (int i = 0; i < shown.size(); i++)
 		{
 			items.add(itemRow(shown.get(i), i % 2 == 1));
 		}
-		if (lines.size() > shown.size())
+		if (lines.size() > MAX_GROUP_LINES)
 		{
-			int more = lines.size() - shown.size();
-			JPanel moreRow = new JPanel(new BorderLayout());
-			moreRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			moreRow.setBorder(new EmptyBorder(2, 6, 2, 6));
-			moreRow.add(smallLabel("and " + more + (more == 1 ? " more item" : " more items"), ColorScheme.LIGHT_GRAY_COLOR));
-			items.add(moreRow);
+			int more = lines.size() - MAX_GROUP_LINES;
+			items.add(expandRow(key, open ? "Show fewer items"
+				: "Show " + more + (more == 1 ? " more item" : " more items")));
 		}
 
 		box.add(items, BorderLayout.CENTER);
@@ -661,12 +699,57 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * One table row: the item icon with its quantity, the name, and the stack's value, colored by tier.
+	 * The clickable line under a long box that shows or hides the rest of its items.
+	 */
+	private JPanel expandRow(String key, String label)
+	{
+		JPanel row = new JPanel(new BorderLayout());
+		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(3, 6, 3, 6));
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20));
+		row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		JLabel text = smallLabel(label, ColorScheme.BRAND_ORANGE);
+		text.setHorizontalAlignment(SwingConstants.CENTER);
+		row.add(text, BorderLayout.CENTER);
+		row.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (SwingUtilities.isLeftMouseButton(e))
+				{
+					if (!expanded.remove(key))
+					{
+						expanded.add(key);
+					}
+					renderLoot();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				row.setBackground(ColorScheme.DARK_GRAY_HOVER_COLOR);
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			}
+		});
+		return row;
+	}
+
+	/**
+	 * One table row: the item icon with its quantity, the name, and a column with the stack's Grand Exchange
+	 * and high alchemy values. The name is colored by value tier.
 	 */
 	private JPanel itemRow(LootGroups.Line line, boolean odd)
 	{
 		Color background = odd ? ROW_ALT_COLOR : ColorScheme.DARKER_GRAY_COLOR;
 		Color tier = tiers.colorFor(line.getValue());
+		ItemValue value = itemValues.get(line.getId());
 
 		JPanel row = new JPanel(new BorderLayout(6, 0));
 		row.setBackground(background);
@@ -683,22 +766,100 @@ public class BankAuditorPanel extends PluginPanel
 		text.setOpaque(false);
 		JLabel name = smallLabel(line.getName(), tier != null ? tier : Color.WHITE);
 		highlight(name, line.getName(), matchItem);
+		name.setToolTipText(line.getName());
 		text.add(name);
-		String detail = "x " + Formats.commas(line.getQuantity());
-		if (line.getValue() > 0)
-		{
-			detail += ", " + Formats.compact(line.getValue()) + " gp";
-		}
-		text.add(smallLabel(detail, tier != null ? tier : ColorScheme.LIGHT_GRAY_COLOR));
+		text.add(smallLabel("x " + Formats.commas(line.getQuantity()), ColorScheme.LIGHT_GRAY_COLOR));
 		row.add(text, BorderLayout.CENTER);
 
-		String tooltip = Formats.commas(line.getQuantity()) + " x " + line.getName();
-		if (line.getValue() > 0)
+		// Coins are already gold, so their amount says it all
+		if (line.getId() != ItemValue.COINS)
 		{
-			tooltip += ", " + Formats.commas(line.getValue()) + " gp";
+			JPanel values = new JPanel(new GridLayout(2, 1));
+			values.setOpaque(false);
+			values.setPreferredSize(new Dimension(VALUE_COLUMN_WIDTH, ITEM_ICON_HEIGHT));
+			values.add(geValue(line, value, tier));
+			values.add(haValue(line, value));
+			row.add(values, BorderLayout.EAST);
 		}
-		row.setToolTipText(tooltip);
 		return row;
+	}
+
+	private JLabel geValue(LootGroups.Line line, ItemValue value, Color tier)
+	{
+		if (value != null && !value.isTradeable())
+		{
+			JLabel label = valueLabel(GE_OFF_ICON, "<html><s>GE</s></html>", ColorScheme.MEDIUM_GRAY_COLOR);
+			label.setToolTipText("Not tradeable");
+			return label;
+		}
+		JLabel label = valueLabel(GE_ICON, Formats.compact(line.getValue()), tier != null ? tier : ColorScheme.GRAND_EXCHANGE_PRICE);
+		long each = line.getQuantity() > 0 ? line.getValue() / line.getQuantity() : 0;
+		label.setToolTipText("Grand Exchange value: " + Formats.commas(line.getValue()) + " gp"
+			+ (line.getQuantity() > 1 ? " (" + Formats.commas(each) + " each)" : "") + ", at the price when it was looted");
+		return label;
+	}
+
+	private JLabel haValue(LootGroups.Line line, ItemValue value)
+	{
+		if (value == null || !value.isAlchable())
+		{
+			JLabel label = valueLabel(HA_OFF_ICON, "<html><s>HA</s></html>", ColorScheme.MEDIUM_GRAY_COLOR);
+			label.setToolTipText("Not alchable");
+			return label;
+		}
+		long total = ItemValue.haValue(line.getId(), line.getQuantity(), value);
+		JLabel label = valueLabel(HA_ICON, Formats.compact(total), ColorScheme.GRAND_EXCHANGE_ALCH);
+		label.setToolTipText("High alchemy value: " + Formats.commas(total) + " gp"
+			+ (line.getQuantity() > 1 ? " (" + Formats.commas(value.getHaPrice()) + " each)" : ""));
+		return label;
+	}
+
+	private static JLabel valueLabel(ImageIcon icon, String text, Color color)
+	{
+		JLabel label = smallLabel(text, color);
+		label.setIcon(icon);
+		label.setIconTextGap(3);
+		label.setHorizontalAlignment(SwingConstants.LEFT);
+		return label;
+	}
+
+	/**
+	 * The coin and high alchemy icons are shared by every value label, so they are drawn into once they
+	 * load and every label picks them up on its next paint.
+	 */
+	private void loadValueIcons()
+	{
+		AsyncBufferedImage coins = itemManager.getImage(ItemID.COINS_10000);
+		coins.onLoaded(() -> SwingUtilities.invokeLater(() -> fillValueIcons(coins, GE_ICON, GE_OFF_ICON)));
+		spriteManager.getSpriteAsync(SpriteID.Magicon.HIGH_LEVEL_ALCHEMY, 0,
+			image -> SwingUtilities.invokeLater(() -> fillValueIcons(image, HA_ICON, HA_OFF_ICON)));
+	}
+
+	private void fillValueIcons(BufferedImage source, ImageIcon icon, ImageIcon off)
+	{
+		if (source == null)
+		{
+			return;
+		}
+		BufferedImage scaled = ImageUtil.resizeImage(source, VALUE_ICON_SIZE, VALUE_ICON_SIZE, true);
+		draw(scaled, icon);
+		draw(ImageUtil.alphaOffset(ImageUtil.grayscaleImage(scaled), 0.5f), off);
+		repaint();
+	}
+
+	private static void draw(BufferedImage image, ImageIcon into)
+	{
+		Graphics2D g = (Graphics2D) ((BufferedImage) into.getImage()).getGraphics();
+		g.setComposite(AlphaComposite.Src);
+		int x = (VALUE_ICON_SIZE - image.getWidth()) / 2;
+		int y = (VALUE_ICON_SIZE - image.getHeight()) / 2;
+		g.drawImage(image, x, y, null);
+		g.dispose();
+	}
+
+	private static ImageIcon blankIcon()
+	{
+		return new ImageIcon(new BufferedImage(VALUE_ICON_SIZE, VALUE_ICON_SIZE, BufferedImage.TYPE_INT_ARGB));
 	}
 
 	/**
