@@ -96,6 +96,19 @@ public interface BankAuditorConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "bestValueOnly",
+		name = "Best value only",
+		description = "In the side panel, show only the higher of the GE and high alch value for each item."
+			+ " Hover it to see both.",
+		section = lootSection,
+		position = 4
+	)
+	default boolean bestValueOnly()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "showTooltips",
 		name = "Loot tooltips",
 		description = "Hover an item in the bank to see how much of it came from loot, from what, where and when",

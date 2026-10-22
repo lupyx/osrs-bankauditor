@@ -1328,10 +1328,11 @@ public class BankAuditorPlugin extends Plugin
 		long now = System.currentTimeMillis();
 		ValueTiers tiers = valueTiers();
 		Map<Integer, ItemValue> values = itemValues(newest);
+		boolean bestValueOnly = config.bestValueOnly();
 
 		SwingUtilities.invokeLater(() ->
 		{
-			target.showLoot(newest, now, tiers, values);
+			target.showLoot(newest, now, tiers, values, bestValueOnly);
 			target.showSellList(sell, bankSeen, tagEnabled);
 		});
 	}

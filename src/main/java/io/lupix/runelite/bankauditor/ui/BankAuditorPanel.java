@@ -103,6 +103,7 @@ public class BankAuditorPanel extends PluginPanel
 	private final Map<Integer, ImageIcon> sprites = new HashMap<>();
 	private ValueTiers tiers = ValueTiers.NONE;
 	private Map<Integer, ItemValue> itemValues = Collections.emptyMap();
+	private boolean bestValueOnly;
 	/**
 	 * Keys of the boxes whose full item list is showing.
 	 */
@@ -509,14 +510,17 @@ public class BankAuditorPanel extends PluginPanel
 	/**
 	 * @param records    every loot record, newest first
 	 * @param tiers      colors for valuable stacks, or {@link ValueTiers#NONE}
-	 * @param itemValues alch price and tradeability of every item in the records
+	 * @param itemValues    alch price and tradeability of every item in the records
+	 * @param bestValueOnly show only the higher of the GE and HA value on each item line
 	 */
-	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers, Map<Integer, ItemValue> itemValues)
+	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers, Map<Integer, ItemValue> itemValues,
+		boolean bestValueOnly)
 	{
 		lootRecords = records;
 		lootNow = now;
 		this.tiers = tiers;
 		this.itemValues = itemValues;
+		this.bestValueOnly = bestValueOnly;
 		renderLoot();
 	}
 
@@ -841,16 +845,18 @@ public class BankAuditorPanel extends PluginPanel
 
 	/**
 	 * One table row: the item icon with its quantity, the name, and a column with the stack's Grand Exchange
-	 * and high alchemy values. The name is colored by value tier. Alched items show the gold they gave, and
-	 * items left on the floor are grayed out.
+	 * and high alchemy values, or only the higher one with best value only on. The name is colored by value
+	 * tier. Alched items show the gold they gave, and items left on the floor are grayed out.
 	 */
 	private JPanel itemRow(LootGroups.Line line, boolean odd)
 	{
 		Color background = odd ? ROW_ALT_COLOR : ColorScheme.DARKER_GRAY_COLOR;
 		boolean left = line.isLeft();
 		boolean alched = line.isAlched();
-		Color tier = left || alched ? null : tiers.colorFor(line.getValue());
 		ItemValue value = itemValues.get(line.getId());
+		long haTotal = ItemValue.haValue(line.getId(), line.getQuantity(), value);
+		boolean showHaOnly = bestValueOnly && ItemValue.alchIsBetter(line.getValue(), haTotal, value);
+		Color tier = left || alched ? null : tiers.colorFor(showHaOnly ? haTotal : line.getValue());
 		String note = left ? "Not picked up"
 			: alched ? "High alched for " + Formats.commas(line.getAlchPrice()) + " gp" + (line.getQuantity() > 1 ? " each" : "")
 			: null;
@@ -887,7 +893,20 @@ public class BankAuditorPanel extends PluginPanel
 			JPanel values = new JPanel(new GridLayout(2, 1));
 			values.setOpaque(false);
 			values.setPreferredSize(new Dimension(VALUE_COLUMN_WIDTH, ITEM_ICON_HEIGHT));
-			if (alched)
+			// Untradeable items have neither value, so they keep both crossed out labels
+			boolean single = bestValueOnly && !alched && (value == null || value.isTradeable());
+			if (single)
+			{
+				values.setLayout(new BorderLayout());
+				JLabel best = bestValue(line, value, haTotal, showHaOnly, tier);
+				if (left)
+				{
+					best.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+					best.setToolTipText(note);
+				}
+				values.add(best, BorderLayout.CENTER);
+			}
+			else if (alched)
 			{
 				JLabel gold = valueLabel(HA_ICON, Formats.compact(line.getValue()), ColorScheme.GRAND_EXCHANGE_ALCH);
 				gold.setToolTipText(priceTip("HA", line.getValue()));
@@ -924,6 +943,21 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		JLabel label = valueLabel(GE_ICON, Formats.compact(line.getValue()), tier != null ? tier : ColorScheme.GRAND_EXCHANGE_PRICE);
 		label.setToolTipText(priceTip("GE", line.getValue()));
+		return label;
+	}
+
+	/**
+	 * The one value shown with best value only on. The hover has both, the shown one first.
+	 */
+	private JLabel bestValue(LootGroups.Line line, ItemValue value, long haTotal, boolean showHa, Color tier)
+	{
+		long geTotal = line.getValue();
+		JLabel label = showHa
+			? valueLabel(HA_ICON, Formats.compact(haTotal), ColorScheme.GRAND_EXCHANGE_ALCH)
+			: valueLabel(GE_ICON, Formats.compact(geTotal), tier != null ? tier : ColorScheme.GRAND_EXCHANGE_PRICE);
+		String ge = priceTip("GE", geTotal);
+		String ha = value != null && value.isAlchable() ? priceTip("HA", haTotal) : "HA: not alchable";
+		label.setToolTipText("<html>" + (showHa ? ha + "<br>" + ge : ge + "<br>" + ha) + "</html>");
 		return label;
 	}
 

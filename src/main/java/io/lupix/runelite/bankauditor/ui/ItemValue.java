@@ -48,4 +48,12 @@ public final class ItemValue
 		}
 		return value != null && value.isAlchable() ? value.haPrice * quantity : 0;
 	}
+
+	/**
+	 * Whether a stack is worth more alched than sold, for showing only the better value. A tie goes to the GE.
+	 */
+	public static boolean alchIsBetter(long geValue, long haValue, ItemValue value)
+	{
+		return value != null && value.isAlchable() && haValue > geValue;
+	}
 }

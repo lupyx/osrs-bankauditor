@@ -24,4 +24,15 @@ public class ItemValueTest
 		assertEquals(0, ItemValue.haValue(1, 10, new ItemValue(5_000, false)));
 		assertEquals(0, ItemValue.haValue(1, 10, null));
 	}
+
+	@Test
+	public void betterValueGoesToTheGeOnATie()
+	{
+		ItemValue alchable = new ItemValue(12_000, true);
+		assertTrue(ItemValue.alchIsBetter(9_500, 12_000, alchable));
+		assertFalse(ItemValue.alchIsBetter(12_000, 12_000, alchable));
+		assertFalse(ItemValue.alchIsBetter(39_512, 12_000, alchable));
+		assertFalse(ItemValue.alchIsBetter(0, 12_000, new ItemValue(12_000, false)));
+		assertFalse(ItemValue.alchIsBetter(0, 12_000, null));
+	}
 }
