@@ -8,9 +8,11 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.GridLayout;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
@@ -28,6 +30,7 @@ import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
 
 /**
  * Side panel with two tabs: recent loot (what, when, from what and where) and the sell list.
+ * The loot tab can show each drop on its own or combine them by location, NPC or day.
  * All methods must be called on the Swing event thread.
  */
 public class BankAuditorPanel extends PluginPanel
@@ -37,9 +40,22 @@ public class BankAuditorPanel extends PluginPanel
 	 * Rows shown in the sell list. The summary above it still counts everything, and the bank tag shows it all.
 	 */
 	private static final int MAX_SELL_ROWS = 50;
+	/**
+	 * Drops shown one by one in the default view, newest first.
+	 */
+	private static final int MAX_LOOT_ROWS = 50;
+	private static final int MAX_GROUPS = 50;
+	/**
+	 * Item lines per combined box, the most valuable ones.
+	 */
+	private static final int MAX_GROUP_LINES = 15;
 
 	private final ItemManager itemManager;
 	private final Runnable onClearLoot;
+	private final Consumer<LootGroups.Mode> onModeChange;
+	private LootGroups.Mode mode;
+	private List<LootRecord> lootRecords = Collections.emptyList();
+	private long lootNow;
 
 	private Runnable onActivate = () ->
 	{
@@ -52,10 +68,16 @@ public class BankAuditorPanel extends PluginPanel
 	private final JPanel sellList = new JPanel();
 	private List<String> shownSellRows = Collections.emptyList();
 
-	public BankAuditorPanel(ItemManager itemManager, Runnable onClearLoot)
+	/**
+	 * @param mode         the loot view to start on
+	 * @param onModeChange told when the user picks another loot view, so it can be remembered
+	 */
+	public BankAuditorPanel(ItemManager itemManager, Runnable onClearLoot, LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange)
 	{
 		this.itemManager = itemManager;
 		this.onClearLoot = onClearLoot;
+		this.mode = mode;
+		this.onModeChange = onModeChange;
 
 		setLayout(new BorderLayout());
 		setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -112,8 +134,12 @@ public class BankAuditorPanel extends PluginPanel
 		JPanel view = new JPanel(new BorderLayout(0, ROW_GAP));
 		view.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
+		JPanel top = new JPanel(new BorderLayout(0, ROW_GAP));
+		top.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		top.add(buildModeTabs(), BorderLayout.NORTH);
 		styleSummary(lootSummary);
-		view.add(lootSummary, BorderLayout.NORTH);
+		top.add(lootSummary, BorderLayout.SOUTH);
+		view.add(top, BorderLayout.NORTH);
 
 		lootList.setLayout(new BoxLayout(lootList, BoxLayout.Y_AXIS));
 		lootList.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -133,6 +159,35 @@ public class BankAuditorPanel extends PluginPanel
 		});
 		view.add(clear, BorderLayout.SOUTH);
 		return view;
+	}
+
+	private MaterialTabGroup buildModeTabs()
+	{
+		// The tabs only switch what the loot list shows, so their own display panel is never added anywhere
+		MaterialTabGroup modes = new MaterialTabGroup(new JPanel());
+		modes.setLayout(new GridLayout(1, LootGroups.Mode.values().length, 2, 0));
+		for (LootGroups.Mode m : LootGroups.Mode.values())
+		{
+			MaterialTab tab = new MaterialTab(m.getLabel(), modes, new JPanel());
+			tab.setFont(FontManager.getRunescapeSmallFont());
+			tab.setToolTipText(m == LootGroups.Mode.DEFAULT ? "Every drop on its own" : "Combine drops by " + m.getLabel().toLowerCase());
+			modes.addTab(tab);
+			if (m == mode)
+			{
+				modes.select(tab);
+			}
+			tab.setOnSelectEvent(() ->
+			{
+				if (mode != m)
+				{
+					mode = m;
+					onModeChange.accept(m);
+					renderLoot();
+				}
+				return true;
+			});
+		}
+		return modes;
 	}
 
 	private JPanel buildSellView()
@@ -156,29 +211,58 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * @param records     newest first, already trimmed to what should be shown
-	 * @param totalCount  how many records exist in total
+	 * @param records every loot record, newest first
 	 */
-	public void showLoot(List<LootRecord> records, int totalCount, long now)
+	public void showLoot(List<LootRecord> records, long now)
+	{
+		lootRecords = records;
+		lootNow = now;
+		renderLoot();
+	}
+
+	private void renderLoot()
 	{
 		lootList.removeAll();
-		if (records.isEmpty())
+		int totalCount = lootRecords.size();
+		if (lootRecords.isEmpty())
 		{
 			lootSummary.setText(html("No loot recorded yet. Kill something!"));
 		}
-		else if (records.size() < totalCount)
+		else if (mode == LootGroups.Mode.DEFAULT)
 		{
-			lootSummary.setText(html("Latest " + records.size() + " of " + Formats.commas(totalCount) + " loot records"));
+			List<LootRecord> shown = lootRecords.subList(0, Math.min(MAX_LOOT_ROWS, totalCount));
+			if (shown.size() < totalCount)
+			{
+				lootSummary.setText(html("Latest " + shown.size() + " of " + Formats.commas(totalCount) + " loot records"));
+			}
+			else
+			{
+				lootSummary.setText(html(Formats.commas(totalCount) + (totalCount == 1 ? " loot record" : " loot records")));
+			}
+			for (LootRecord record : shown)
+			{
+				lootList.add(lootBox(record, lootNow));
+				lootList.add(gap());
+			}
 		}
 		else
 		{
-			lootSummary.setText(html(Formats.commas(totalCount) + (totalCount == 1 ? " loot record" : " loot records")));
-		}
-
-		for (LootRecord record : records)
-		{
-			lootList.add(lootBox(record, now));
-			lootList.add(gap());
+			ZoneId zone = ZoneId.systemDefault();
+			List<LootGroups.Group> groups = LootGroups.group(lootRecords, mode, zone);
+			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source" : "day";
+			String text = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s")
+				+ " from " + Formats.commas(totalCount) + (totalCount == 1 ? " loot record" : " loot records");
+			if (groups.size() > MAX_GROUPS)
+			{
+				text += ", latest " + MAX_GROUPS + " shown";
+			}
+			lootSummary.setText(html(text));
+			for (LootGroups.Group group : groups.subList(0, Math.min(MAX_GROUPS, groups.size())))
+			{
+				String title = mode == LootGroups.Mode.DAY ? LootGroups.dayTitle(group.getTitle(), lootNow, zone) : group.getTitle();
+				lootList.add(groupBox(group, title));
+				lootList.add(gap());
+			}
 		}
 		lootList.revalidate();
 		lootList.repaint();
@@ -288,6 +372,67 @@ public class BankAuditorPanel extends PluginPanel
 		if (record.getTotalValue() > 0)
 		{
 			JLabel total = new JLabel("Total " + Formats.compact(record.getTotalValue()) + " gp");
+			total.setFont(FontManager.getRunescapeSmallFont());
+			total.setForeground(ColorScheme.GRAND_EXCHANGE_PRICE);
+			total.setHorizontalAlignment(SwingConstants.RIGHT);
+			JPanel totalRow = new JPanel(new BorderLayout());
+			totalRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			totalRow.add(total, BorderLayout.EAST);
+			items.add(totalRow);
+		}
+		box.add(items, BorderLayout.CENTER);
+		return box;
+	}
+
+	private JPanel groupBox(LootGroups.Group group, String title)
+	{
+		JPanel box = new JPanel(new BorderLayout());
+		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+
+		JPanel header = new JPanel(new BorderLayout(4, 0));
+		header.setBackground(ColorScheme.DARKER_GRAY_HOVER_COLOR);
+		header.setBorder(new EmptyBorder(4, 6, 4, 6));
+
+		JLabel name = new JLabel(title);
+		name.setFont(FontManager.getRunescapeSmallFont());
+		name.setForeground(Color.WHITE);
+		name.setToolTipText(title);
+		header.add(name, BorderLayout.CENTER);
+
+		if (mode != LootGroups.Mode.DAY)
+		{
+			JLabel when = new JLabel(Formats.ago(lootNow, group.getNewest()));
+			when.setFont(FontManager.getRunescapeSmallFont());
+			when.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			when.setToolTipText("Latest drop");
+			header.add(when, BorderLayout.EAST);
+		}
+
+		JLabel detail = new JLabel(group.getDetail());
+		detail.setFont(FontManager.getRunescapeSmallFont());
+		detail.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		detail.setToolTipText(group.getDetail());
+		header.add(detail, BorderLayout.SOUTH);
+		box.add(header, BorderLayout.NORTH);
+
+		JPanel items = new JPanel();
+		items.setLayout(new BoxLayout(items, BoxLayout.Y_AXIS));
+		items.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		items.setBorder(new EmptyBorder(4, 6, 4, 6));
+		List<LootGroups.Line> lines = group.getLines();
+		for (LootGroups.Line line : lines.subList(0, Math.min(MAX_GROUP_LINES, lines.size())))
+		{
+			items.add(lineRow(Formats.commas(line.getQuantity()) + " x " + line.getName(),
+				line.getValue() > 0 ? Formats.compact(line.getValue()) : ""));
+		}
+		if (lines.size() > MAX_GROUP_LINES)
+		{
+			int more = lines.size() - MAX_GROUP_LINES;
+			items.add(lineRow("and " + more + (more == 1 ? " more item" : " more items"), ""));
+		}
+		if (group.getTotalValue() > 0)
+		{
+			JLabel total = new JLabel("Total " + Formats.compact(group.getTotalValue()) + " gp");
 			total.setFont(FontManager.getRunescapeSmallFont());
 			total.setForeground(ColorScheme.GRAND_EXCHANGE_PRICE);
 			total.setHorizontalAlignment(SwingConstants.RIGHT);

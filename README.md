@@ -29,7 +29,7 @@ Sellable: 1,200 (240K gp)
 | `Death rune:5k` | keep 5,000 death runes, anything above that can be sold |
 | `Cannonball:2k` | keep 2,000 (k, m and b work) |
 
-**Loot history.** The side panel lists recent drops with the source, how long ago, and the area and world. Hover the area to see the exact tile.
+**Loot history.** The side panel lists recent drops with the source, how long ago, and the area and world. Hover the area to see the exact tile. The tabs above the list switch between every drop on its own and drops combined by location, by NPC or by day. A combined box adds up the items and their value, and says how many drops went into it. The panel remembers the last tab you picked.
 
 ## Settings
 

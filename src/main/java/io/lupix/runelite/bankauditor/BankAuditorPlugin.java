@@ -16,6 +16,7 @@ import io.lupix.runelite.bankauditor.sell.KeepRule;
 import io.lupix.runelite.bankauditor.sell.SellableCalculator;
 import io.lupix.runelite.bankauditor.ui.BankAuditorOverlay;
 import io.lupix.runelite.bankauditor.ui.BankAuditorPanel;
+import io.lupix.runelite.bankauditor.ui.LootGroups;
 import io.lupix.runelite.bankauditor.ui.TooltipText;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -124,7 +125,6 @@ public class BankAuditorPlugin extends Plugin
 	private static final int SAVE_INTERVAL_TICKS = 50;
 	private static final int PANEL_REFRESH_TICKS = 3;
 	private static final int PANEL_CLOCK_TICKS = 100;
-	private static final int PANEL_LOOT_RECORDS = 50;
 	private static final int TOOLTIP_SOURCES = 3;
 	private static final long DAY_MILLIS = TimeUnit.DAYS.toMillis(1);
 	private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
@@ -1116,7 +1116,8 @@ public class BankAuditorPlugin extends Plugin
 		{
 			return;
 		}
-		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, () -> clientThread.invokeLater(this::clearLootData));
+		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, () -> clientThread.invokeLater(this::clearLootData),
+			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()));
 		newPanel.setOnActivate(() -> clientThread.invokeLater(this::refreshPanel));
 		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		navButton = NavigationButton.builder()
@@ -1149,9 +1150,7 @@ public class BankAuditorPlugin extends Plugin
 		panelDirty = false;
 		lastPanelRefresh = tickCounter;
 
-		List<LootRecord> newest = history.newestFirst();
-		List<LootRecord> shown = new ArrayList<>(newest.subList(0, Math.min(PANEL_LOOT_RECORDS, newest.size())));
-		int total = newest.size();
+		List<LootRecord> newest = new ArrayList<>(history.newestFirst());
 		List<ItemSummary> sell = sellList();
 		boolean bankSeen = bankCounts != null;
 		boolean tagEnabled = config.sellableTag();
@@ -1159,7 +1158,7 @@ public class BankAuditorPlugin extends Plugin
 
 		SwingUtilities.invokeLater(() ->
 		{
-			target.showLoot(shown, total, now);
+			target.showLoot(newest, now);
 			target.showSellList(sell, bankSeen, tagEnabled);
 		});
 	}
@@ -1189,6 +1188,9 @@ public class BankAuditorPlugin extends Plugin
 
 		switch (event.getKey())
 		{
+			case "lootGrouping":
+				// Only the panel reads it, and the panel is what changed it
+				return;
 			case "keepList":
 				keepList = KeepList.parse(config.keepList());
 				break;

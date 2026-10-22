@@ -194,6 +194,24 @@ public interface BankAuditorConfig extends Config
 	void setKeepList(String keepList);
 
 	@ConfigItem(
+		keyName = "lootGrouping",
+		name = "",
+		description = "",
+		hidden = true
+	)
+	default String lootGrouping()
+	{
+		return "DEFAULT";
+	}
+
+	@ConfigItem(
+		keyName = "lootGrouping",
+		name = "",
+		description = ""
+	)
+	void setLootGrouping(String mode);
+
+	@ConfigItem(
 		keyName = "keepMenuOption",
 		name = "Keep menu option",
 		description = "Right-click option on bank and inventory items to add or remove them from the keep list",
