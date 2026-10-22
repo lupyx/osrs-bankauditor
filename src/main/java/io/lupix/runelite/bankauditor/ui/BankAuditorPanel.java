@@ -881,7 +881,8 @@ public class BankAuditorPanel extends PluginPanel
 		highlight(name, line.getName(), matchItem);
 		name.setToolTipText(note != null ? note : line.getName());
 		text.add(name);
-		String amount = "x " + Formats.commas(line.getQuantity()) + (left ? " not picked up" : alched ? " high alched" : "");
+		// Left items only say so on hover; the gray already sets them apart
+		String amount = "x " + Formats.commas(line.getQuantity()) + (alched ? " high alched" : "");
 		JLabel amountLabel = smallLabel(amount, left ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
 		amountLabel.setToolTipText(note);
 		text.add(amountLabel);
