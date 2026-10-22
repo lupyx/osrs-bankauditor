@@ -78,7 +78,7 @@ Data is saved per account in your RuneLite profile.
 
 ## Loot sources
 
-NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets, raids, minigames and the rest come from RuneLite's Loot Tracker plugin, so keep it enabled if you want those too. While the Loot Tracker is on, Bank Auditor reads everything from it so nothing gets counted twice. Kills in Last Man Standing and Soul Wars are skipped, like the Loot Tracker does.
+NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets, raids, minigames and the rest come from RuneLite's Loot Tracker plugin, so keep it enabled if you want those too. While the Loot Tracker is on, Bank Auditor reads everything from it so nothing gets counted twice. The Loot Tracker reports the Lunar Chest from Moons of Peril every time you open it, so Bank Auditor only counts what is new since you last looked. Loot sent straight to the bank from a reward chest is counted as loot the next time you open a bank. Kills in Last Man Standing and Soul Wars are skipped, like the Loot Tracker does.
 
 ## Known limits
 

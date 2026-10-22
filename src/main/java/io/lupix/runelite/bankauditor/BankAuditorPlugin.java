@@ -2,6 +2,7 @@ package io.lupix.runelite.bankauditor;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
+import io.lupix.runelite.bankauditor.loot.ChestLoot;
 import io.lupix.runelite.bankauditor.loot.GroundLootTracker;
 import io.lupix.runelite.bankauditor.loot.LootAttribution;
 import io.lupix.runelite.bankauditor.loot.LootHistory;
@@ -120,6 +121,10 @@ import net.runelite.client.util.Text;
 public class BankAuditorPlugin extends Plugin
 {
 	static final String SELLABLE_TAG = "sellable";
+	/**
+	 * The Loot Tracker's name for the Moons of Peril reward chest.
+	 */
+	private static final String LUNAR_CHEST = "Lunar Chest";
 
 	// RuneScape profile keys holding the plugin's own state, next to the normal config items
 	static final String KEY_LEDGER = "ledger";
@@ -212,6 +217,7 @@ public class BankAuditorPlugin extends Plugin
 	private TripLog trips = new TripLog();
 	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
 	private final GroundLootTracker groundLoot = new GroundLootTracker();
+	private final ChestLoot lunarChest = new ChestLoot();
 	/**
 	 * Item a High Level Alchemy cast was clicked on, or -1.
 	 */
@@ -358,6 +364,7 @@ public class BankAuditorPlugin extends Plugin
 	protected void shutDown()
 	{
 		groundLoot.clear();
+		lunarChest.clear();
 		overlayManager.remove(overlay);
 		removePanel();
 		unregisterTag();
@@ -397,10 +404,33 @@ public class BankAuditorPlugin extends Plugin
 	{
 		if (lootTrackerActive)
 		{
+			Collection<ItemStack> items = event.getItems();
+			if (LUNAR_CHEST.equals(event.getName()) && items != null)
+			{
+				items = unseenLunarLoot(items);
+			}
 			addLoot(event.getName(), event.getCombatLevel(),
 				event.getType() == null ? LootSourceType.OTHER : LootSourceType.fromName(event.getType().name()),
-				event.getItems());
+				items);
 		}
+	}
+
+	/**
+	 * What the Lunar Chest holds that wasn't counted the last time it was opened.
+	 */
+	private List<ItemStack> unseenLunarLoot(Collection<ItemStack> items)
+	{
+		Map<Integer, Long> shown = new HashMap<>();
+		for (ItemStack stack : new ArrayList<>(items))
+		{
+			if (stack != null && stack.getId() > 0 && stack.getQuantity() > 0)
+			{
+				shown.merge(itemManager.canonicalize(stack.getId()), (long) stack.getQuantity(), Long::sum);
+			}
+		}
+		List<ItemStack> fresh = new ArrayList<>();
+		lunarChest.opened(shown).forEach((id, quantity) -> fresh.add(new ItemStack(id, (int) Math.min(Integer.MAX_VALUE, quantity))));
+		return fresh;
 	}
 
 	@Subscribe
@@ -590,6 +620,10 @@ public class BankAuditorPlugin extends Plugin
 		if (id == InventoryID.BANK)
 		{
 			onBankContainer(event.getItemContainer());
+		}
+		else if (id == InventoryID.PMOON_REWARDINV)
+		{
+			lunarChest.contentsChanged(count(event.getItemContainer()));
 		}
 		else if (id == InventoryID.INV)
 		{
@@ -1617,6 +1651,7 @@ public class BankAuditorPlugin extends Plugin
 			return;
 		}
 		groundLoot.clear();
+		lunarChest.clear();
 		saveState(false);
 
 		profileKey = newProfileKey;
