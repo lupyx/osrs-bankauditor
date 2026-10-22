@@ -7,6 +7,7 @@ import io.lupix.runelite.bankauditor.util.Formats;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -19,7 +20,9 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import javax.swing.Box;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
@@ -29,12 +32,16 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.components.IconTextField;
 import net.runelite.client.ui.components.materialtabs.MaterialTab;
 import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
 import net.runelite.client.util.ImageUtil;
@@ -62,6 +69,7 @@ public class BankAuditorPanel extends PluginPanel
 	private static final int MAX_GROUP_LINES = 15;
 	private static final int SOURCE_ICON_SIZE = 20;
 	private static final int MODE_BUTTON_SIZE = 20;
+	private static final int SEARCH_DELAY_MILLIS = 250;
 	private static final int ITEM_ICON_WIDTH = 36;
 	private static final int ITEM_ICON_HEIGHT = 32;
 	private static final Color ROW_ALT_COLOR = new Color(35, 35, 35);
@@ -86,6 +94,11 @@ public class BankAuditorPanel extends PluginPanel
 	private volatile boolean active;
 
 	private final JLabel lootSummary = new JLabel();
+	private final IconTextField searchBar = new IconTextField();
+	private final Timer searchTimer = new Timer(SEARCH_DELAY_MILLIS, e -> renderLoot());
+	private boolean matchSource = true;
+	private boolean matchLocation = true;
+	private boolean matchItem = true;
 	private final JPanel lootList = new JPanel();
 	private final JLabel sellSummary = new JLabel();
 	private final JPanel sellList = new JPanel();
@@ -160,11 +173,20 @@ public class BankAuditorPanel extends PluginPanel
 		JPanel view = new JPanel(new BorderLayout(0, ROW_GAP));
 		view.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		JPanel top = new JPanel(new BorderLayout(6, 0));
-		top.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		JPanel summaryRow = new JPanel(new BorderLayout(6, 0));
+		summaryRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		styleSummary(lootSummary);
-		top.add(lootSummary, BorderLayout.CENTER);
-		top.add(buildModeButtons(), BorderLayout.EAST);
+		summaryRow.add(lootSummary, BorderLayout.CENTER);
+		summaryRow.add(buildModeButtons(), BorderLayout.EAST);
+
+		JPanel top = new JPanel();
+		top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+		top.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		top.add(buildSearchBar());
+		top.add(Box.createVerticalStrut(4));
+		top.add(buildFilterRow());
+		top.add(Box.createVerticalStrut(ROW_GAP));
+		top.add(summaryRow);
 		view.add(top, BorderLayout.NORTH);
 
 		lootList.setLayout(new BoxLayout(lootList, BoxLayout.Y_AXIS));
@@ -188,6 +210,118 @@ public class BankAuditorPanel extends PluginPanel
 		});
 		view.add(clear, BorderLayout.SOUTH);
 		return view;
+	}
+
+	private IconTextField buildSearchBar()
+	{
+		searchBar.setIcon(IconTextField.Icon.SEARCH);
+		searchBar.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 20, 30));
+		searchBar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+		searchBar.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		searchBar.setHoverBackgroundColor(ColorScheme.DARK_GRAY_HOVER_COLOR);
+		searchBar.setToolTipText("Search loot by source, location or item name");
+		// Wait for a short pause in typing, since every render rebuilds the whole list
+		searchTimer.setRepeats(false);
+		searchBar.getDocument().addDocumentListener(new DocumentListener()
+		{
+			@Override
+			public void insertUpdate(DocumentEvent e)
+			{
+				searchTimer.restart();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e)
+			{
+				searchTimer.restart();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e)
+			{
+				searchTimer.restart();
+			}
+		});
+		searchBar.addClearListener(this::renderLoot);
+		return searchBar;
+	}
+
+	/**
+	 * Toggles under the search bar for what the search looks at. At least one stays on.
+	 */
+	private JPanel buildFilterRow()
+	{
+		JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setAlignmentX(LEFT_ALIGNMENT);
+		JLabel title = smallLabel("Match ", ColorScheme.LIGHT_GRAY_COLOR);
+		row.add(title);
+		row.add(filterChip("Source", "source names", () -> matchSource, on -> matchSource = on));
+		row.add(Box.createHorizontalStrut(3));
+		row.add(filterChip("Location", "location names", () -> matchLocation, on -> matchLocation = on));
+		row.add(Box.createHorizontalStrut(3));
+		row.add(filterChip("Item", "item names", () -> matchItem, on -> matchItem = on));
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+		return row;
+	}
+
+	private JLabel filterChip(String name, String what, BooleanSupplier get, Consumer<Boolean> set)
+	{
+		JLabel chip = smallLabel(name, Color.WHITE);
+		chip.setOpaque(true);
+		chip.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		Runnable style = () ->
+		{
+			boolean on = get.getAsBoolean();
+			chip.setForeground(on ? Color.WHITE : ColorScheme.MEDIUM_GRAY_COLOR);
+			chip.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createLineBorder(on ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_HOVER_COLOR),
+				new EmptyBorder(1, 5, 1, 5)));
+			chip.setToolTipText((on ? "Searching " : "Not searching ") + what + ". Click to turn " + (on ? "off" : "on") + ".");
+		};
+		style.run();
+		chip.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (!SwingUtilities.isLeftMouseButton(e))
+				{
+					return;
+				}
+				boolean on = get.getAsBoolean();
+				// Turning off the last filter would hide everything, so that click does nothing
+				if (on && (matchSource ? 1 : 0) + (matchLocation ? 1 : 0) + (matchItem ? 1 : 0) == 1)
+				{
+					return;
+				}
+				set.accept(!on);
+				style.run();
+				if (!searchBar.getText().trim().isEmpty())
+				{
+					renderLoot();
+				}
+			}
+		});
+		return chip;
+	}
+
+	private String filterNames()
+	{
+		List<String> names = new ArrayList<>();
+		if (matchSource)
+		{
+			names.add("source");
+		}
+		if (matchLocation)
+		{
+			names.add("location");
+		}
+		if (matchItem)
+		{
+			names.add("item");
+		}
+		return String.join(", ", names) + (names.size() == 1 ? " name" : " names");
 	}
 
 	/**
@@ -297,15 +431,23 @@ public class BankAuditorPanel extends PluginPanel
 	private void renderLoot()
 	{
 		lootList.removeAll();
-		int totalCount = lootRecords.size();
+		String query = searchBar.getText().trim();
+		List<LootRecord> records = LootSearch.filter(lootRecords, query, matchSource, matchLocation, matchItem);
+		int totalCount = records.size();
+		// While searching, the counts say "matching" so an empty list doesn't look like lost data
+		String matching = query.isEmpty() ? "" : " matching";
 		if (lootRecords.isEmpty())
 		{
 			setSummary("No loot yet", "No loot recorded yet. Kill something!");
 		}
+		else if (records.isEmpty())
+		{
+			setSummary("No matches", "Nothing matches \"" + query + "\" in the " + filterNames());
+		}
 		else if (mode == LootGroups.Mode.DEFAULT)
 		{
-			List<LootRecord> shown = lootRecords.subList(0, Math.min(MAX_LOOT_ROWS, totalCount));
-			String drops = Formats.commas(totalCount) + (totalCount == 1 ? " drop" : " drops");
+			List<LootRecord> shown = records.subList(0, Math.min(MAX_LOOT_ROWS, totalCount));
+			String drops = Formats.commas(totalCount) + matching + (totalCount == 1 ? " drop" : " drops");
 			if (shown.size() < totalCount)
 			{
 				setSummary("Latest " + shown.size() + " of " + drops, "The latest " + shown.size() + " of " + drops + ", newest first");
@@ -323,10 +465,10 @@ public class BankAuditorPanel extends PluginPanel
 		else
 		{
 			ZoneId zone = ZoneId.systemDefault();
-			List<LootGroups.Group> groups = LootGroups.group(lootRecords, mode, zone);
+			List<LootGroups.Group> groups = LootGroups.group(records, mode, zone);
 			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source" : "day";
 			String count = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s");
-			String drops = Formats.commas(totalCount) + (totalCount == 1 ? " drop" : " drops");
+			String drops = Formats.commas(totalCount) + matching + (totalCount == 1 ? " drop" : " drops");
 			if (groups.size() > MAX_GROUPS)
 			{
 				setSummary(MAX_GROUPS + " of " + count + ", " + drops, "The latest " + MAX_GROUPS + " of " + count + ", from " + drops);
