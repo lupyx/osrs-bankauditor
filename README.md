@@ -107,7 +107,7 @@ Bank Auditor is not on the Plugin Hub yet. RuneLite only loads plugins from outs
 
 The launcher doesn't update this client. After a game update, if it says it is out of date, run `./gradlew run --refresh-dependencies` to get the newest RuneLite.
 
-`./gradlew sideload` only copies the jar, and `./gradlew unsideload` removes it. To debug in IntelliJ, open the folder as a Gradle project and run the `main` method in `src/test/java/io/lupix/runelite/bankauditor/BankAuditorPluginTest.java` with the VM option `-ea` and the program argument `--developer-mode`. That loads the plugin from the source, so run `unsideload` first or it shows up twice.
+`./gradlew sideload` only copies the jar, and `./gradlew unsideload` removes it. To debug in IntelliJ, open the folder as a Gradle project and run the `main` method in `src/test/java/io/lupix/runelite/bankauditor/BankAuditorPluginTest.java` with the VM options `-ea -da:net.runelite.client.plugins.gpu...` and the program argument `--developer-mode`. That loads the plugin from the source, so run `unsideload` first or it shows up twice.
 
 To get it on the Plugin Hub so it installs like any other plugin:
 
