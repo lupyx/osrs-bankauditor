@@ -33,6 +33,8 @@ Sellable: 1,200 (240K gp)
 
 Each box shows the boss icon when the source has one on the hiscores (Vorkath, Zulrah, raids and so on), and every item line has its icon and quantity, with its Grand Exchange and high alchemy value in a column on the right. A crossed out GE or HA means the item can't be traded or alched; hover it to see which. Coins only show their amount. The header shows how many items the box has, and the footer bar adds up the GE and HA values side by side in the middle, in a bigger font. Hover any value to see the exact amount. Turn on Best value only in the settings to show just the higher of GE and HA on each item, with both in the hover so you can compare. The value color on the left edge starts at the first item and follows what the box is worth, taking the better of GE and HA for each item. A box with more than 15 items has a Show more line you can click to see the rest. Kill drops you never pick up are grayed out once they vanish from the floor, with "not picked up" on hover, and don't count toward the box totals. The plugin decides this from the pile itself: a pile that disappears while only you can see it was yours to take, one that runs out its timer was left, and one that disappears after other players can see it only counts as picked up if you clicked Take on it. Teleporting away from loot counts as leaving it.
 
+**Drop popups.** When loot comes in, a small copy of a loot box pops up in game, right above the chat box. It has the source, the most valuable items with their GE value, and the GE and HA totals at the bottom. It slides up, stays for 6 seconds and fades out. More loot from the same source while it is up goes into the same popup, which then says how many drops it holds, so pickpocketing or a burst of kills doesn't fill the screen. Up to three popups show at once, newest at the bottom. Hover one to keep it up, right-click it to dismiss them, and hold Alt to drag them somewhere else. Items listed sets how many items a popup lists before the rest go on one line, so you decide how much room it takes. Best value only and the value colors apply here too.
+
 Casting High Level Alchemy on looted items is noticed too. The item gets a line of its own saying it was high alched, with the gold it gave, and that gold counts toward the box totals. Only items the plugin counts as loot are marked, starting with the newest drop that still has one. Stacks worth a lot get colored by value tier like ground items: 20K, 100K, 1M and 10M gp by default. The tiers and colors are in the Loot colors section of the settings. Clear loot data asks you to confirm first, with Cancel as the default.
 
 ## Settings
@@ -47,6 +49,9 @@ Every part can be turned off on its own.
 | | Max loot records | 500 |
 | | Side panel | on |
 | | Best value only | off |
+| Drop popup | Show drop popups | on |
+| | Items listed | 5 |
+| | Show for | 6 s |
 | Bank | Loot tooltips | on |
 | | Show looted amount | on |
 | | Looted amount color | green |

@@ -20,6 +20,8 @@ import io.lupix.runelite.bankauditor.sell.KeepRule;
 import io.lupix.runelite.bankauditor.sell.SellableCalculator;
 import io.lupix.runelite.bankauditor.ui.BankAuditorOverlay;
 import io.lupix.runelite.bankauditor.ui.BankAuditorPanel;
+import io.lupix.runelite.bankauditor.ui.DropPopupOverlay;
+import io.lupix.runelite.bankauditor.ui.DropPopups;
 import io.lupix.runelite.bankauditor.ui.ItemValue;
 import io.lupix.runelite.bankauditor.ui.LootGroups;
 import io.lupix.runelite.bankauditor.ui.SourceIcons;
@@ -127,6 +129,7 @@ public class BankAuditorPlugin extends Plugin
 	 * The Loot Tracker's name for the Moons of Peril reward chest.
 	 */
 	private static final String LUNAR_CHEST = "Lunar Chest";
+	private static final SourceIcons SOURCE_ICONS = sourceIcons();
 
 	// RuneScape profile keys holding the plugin's own state, next to the normal config items
 	static final String KEY_LEDGER = "ledger";
@@ -195,6 +198,9 @@ public class BankAuditorPlugin extends Plugin
 
 	@Inject
 	private BankAuditorOverlay overlay;
+
+	@Inject
+	private DropPopupOverlay popupOverlay;
 
 	@Inject
 	private ClientToolbar clientToolbar;
@@ -336,6 +342,7 @@ public class BankAuditorPlugin extends Plugin
 		codec = new LootStateCodec(gson);
 		keepList = KeepList.parse(config.keepList());
 		overlayManager.add(overlay);
+		overlayManager.add(popupOverlay);
 		nativeSources.start(this::eventLoot, () -> !useLootTracker());
 		eventBus.register(nativeSources);
 		if (config.showPanel())
@@ -377,11 +384,13 @@ public class BankAuditorPlugin extends Plugin
 		lunarChest.clear();
 		eventBus.unregister(nativeSources);
 		overlayManager.remove(overlay);
+		overlayManager.remove(popupOverlay);
 		removePanel();
 		unregisterTag();
 
 		clientThread.invokeLater(() ->
 		{
+			popupOverlay.clear();
 			saveState(true);
 			ledger = new LootLedger();
 			history = new LootHistory();
@@ -549,6 +558,10 @@ public class BankAuditorPlugin extends Plugin
 		long now = System.currentTimeMillis();
 		LootRecord record = new LootRecord(now, source, type, combatLevel, currentLocation(), items);
 		history.add(record);
+		if (config.dropPopups())
+		{
+			showPopup(record);
+		}
 		if (groundDrop)
 		{
 			groundLoot.dropRecorded(record, client.getTickCount());
@@ -563,6 +576,17 @@ public class BankAuditorPlugin extends Plugin
 			reconcileNeeded = true;
 		}
 		clearCaches();
+	}
+
+	private void showPopup(LootRecord record)
+	{
+		List<DropPopups.Item> items = new ArrayList<>(record.getItems().size());
+		for (LootItem item : record.getItems())
+		{
+			items.add(new DropPopups.Item(item.getId(), item.getName(), item.getQuantity(), item.getValue(), itemValue(item.getId())));
+		}
+		// The name alone, without the combat level, so it fits the small popup
+		popupOverlay.show(record.getSource(), record.getType(), SOURCE_ICONS.spriteFor(record.getSource(), record.getType()), items);
 	}
 
 	private boolean inMinigamePvp()
@@ -1415,7 +1439,7 @@ public class BankAuditorPlugin extends Plugin
 		{
 			return;
 		}
-		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, spriteManager, sourceIcons(), () -> clientThread.invokeLater(this::clearLootData),
+		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, spriteManager, SOURCE_ICONS, () -> clientThread.invokeLater(this::clearLootData),
 			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()),
 			LootGroups.Interval.fromName(config.lootTimeRange()), i -> config.setLootTimeRange(i.name()),
 			() -> clientThread.invokeLater(() ->
@@ -1482,17 +1506,25 @@ public class BankAuditorPlugin extends Plugin
 		{
 			for (LootItem item : record.getItems())
 			{
-				itemValueCache.computeIfAbsent(item.getId(), id ->
-				{
-					ItemComposition composition = itemManager.getItemComposition(id);
-					return new ItemValue(composition.getHaPrice(), composition.isTradeable());
-				});
+				itemValue(item.getId());
 			}
 		}
 		return new HashMap<>(itemValueCache);
 	}
 
-	private ValueTiers valueTiers()
+	private ItemValue itemValue(int itemId)
+	{
+		return itemValueCache.computeIfAbsent(itemId, id ->
+		{
+			ItemComposition composition = itemManager.getItemComposition(id);
+			return new ItemValue(composition.getHaPrice(), composition.isTradeable());
+		});
+	}
+
+	/**
+	 * The value colors from the settings, or none when they are off.
+	 */
+	public ValueTiers valueTiers()
 	{
 		if (!config.valueColors())
 		{

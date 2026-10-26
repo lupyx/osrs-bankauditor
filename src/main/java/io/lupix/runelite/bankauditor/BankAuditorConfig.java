@@ -23,23 +23,30 @@ public interface BankAuditorConfig extends Config
 	String lootSection = "loot";
 
 	@ConfigSection(
+		name = "Drop popup",
+		description = "A small loot box that pops up in game when you get loot",
+		position = 1
+	)
+	String popupSection = "popup";
+
+	@ConfigSection(
 		name = "Bank",
 		description = "What the plugin shows while the bank is open",
-		position = 1
+		position = 2
 	)
 	String bankSection = "bank";
 
 	@ConfigSection(
 		name = "Selling",
 		description = "Which items count as sellable and how they are highlighted",
-		position = 2
+		position = 3
 	)
 	String sellSection = "sell";
 
 	@ConfigSection(
 		name = "Loot colors",
-		description = "Color loot in the side panel by how much a stack is worth",
-		position = 3,
+		description = "Color loot in the side panel and drop popups by how much a stack is worth",
+		position = 4,
 		closedByDefault = true
 	)
 	String colorSection = "colors";
@@ -111,14 +118,56 @@ public interface BankAuditorConfig extends Config
 	@ConfigItem(
 		keyName = "bestValueOnly",
 		name = "Best value only",
-		description = "In the side panel, show only the higher of the GE and high alch value for each item."
-			+ " Hover it to see both.",
+		description = "Show only the higher of the GE and high alch value for each item, in the side panel"
+			+ " and in drop popups. Hover a value in the side panel to see both.",
 		section = lootSection,
 		position = 5
 	)
 	default boolean bestValueOnly()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "dropPopups",
+		name = "Show drop popups",
+		description = "Pop up a small loot box in game when you get loot, with what it is worth."
+			+ " More loot from the same source while it is up is added to it. Hover it to keep it up,"
+			+ " right-click it to dismiss, and hold Alt to drag it somewhere else.",
+		section = popupSection,
+		position = 0
+	)
+	default boolean dropPopups()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "popupItems",
+		name = "Items listed",
+		description = "How many items a popup lists, most valuable first. The rest are counted on one line"
+			+ " under them, and the totals include everything.",
+		section = popupSection,
+		position = 1
+	)
+	@Range(min = 1, max = 28)
+	default int popupItems()
+	{
+		return 5;
+	}
+
+	@ConfigItem(
+		keyName = "popupSeconds",
+		name = "Show for",
+		description = "How long a popup stays up before it fades out",
+		section = popupSection,
+		position = 2
+	)
+	@Range(min = 2, max = 60)
+	@Units(Units.SECONDS)
+	default int popupSeconds()
+	{
+		return 6;
 	}
 
 	@ConfigItem(
