@@ -35,6 +35,7 @@ import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -299,60 +300,49 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * Toggles under the search bar for what the search looks at. At least one stays on.
+	 * Checkboxes under the search bar for what the search looks at. At least one stays on.
 	 */
 	private JPanel buildFilterRow()
 	{
-		// Equal columns over the full width, so all three always fit
-		JPanel row = new JPanel(new GridLayout(1, 3, 3, 0));
+		// Spread over the full width, lined up with the edges of the search bar
+		JPanel row = new JPanel();
+		row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.add(filterChip("Source", "source names", () -> matchSource, on -> matchSource = on));
-		row.add(filterChip("Location", "location names", () -> matchLocation, on -> matchLocation = on));
-		row.add(filterChip("Item", "item names", () -> matchItem, on -> matchItem = on));
+		row.add(filterBox("Source", "source names", () -> matchSource, on -> matchSource = on));
+		row.add(Box.createHorizontalGlue());
+		row.add(filterBox("Location", "location names", () -> matchLocation, on -> matchLocation = on));
+		row.add(Box.createHorizontalGlue());
+		row.add(filterBox("Item", "item names", () -> matchItem, on -> matchItem = on));
 		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		return row;
 	}
 
-	private JLabel filterChip(String name, String what, BooleanSupplier get, Consumer<Boolean> set)
+	private JCheckBox filterBox(String name, String what, BooleanSupplier get, Consumer<Boolean> set)
 	{
-		JLabel chip = smallLabel(name, Color.WHITE);
-		chip.setHorizontalAlignment(SwingConstants.CENTER);
-		chip.setOpaque(true);
-		chip.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		Runnable style = () ->
+		JCheckBox box = new JCheckBox(name, get.getAsBoolean());
+		box.setFont(FontManager.getRunescapeSmallFont());
+		box.setForeground(Color.WHITE);
+		box.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		box.setFocusable(false);
+		box.setIconTextGap(3);
+		box.setBorder(new EmptyBorder(0, 0, 0, 0));
+		box.setToolTipText("Search " + what);
+		box.addActionListener(e ->
 		{
-			boolean on = get.getAsBoolean();
-			chip.setForeground(on ? Color.WHITE : ColorScheme.MEDIUM_GRAY_COLOR);
-			chip.setBorder(BorderFactory.createCompoundBorder(
-				BorderFactory.createLineBorder(on ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_HOVER_COLOR),
-				new EmptyBorder(1, 5, 1, 5)));
-			chip.setToolTipText((on ? "Searching " : "Not searching ") + what + ". Click to turn " + (on ? "off" : "on") + ".");
-		};
-		style.run();
-		chip.addMouseListener(new MouseAdapter()
-		{
-			@Override
-			public void mousePressed(MouseEvent e)
+			boolean on = box.isSelected();
+			// Unticking the last one would hide everything, so it stays ticked
+			if (!on && (matchSource ? 1 : 0) + (matchLocation ? 1 : 0) + (matchItem ? 1 : 0) == 1)
 			{
-				if (!SwingUtilities.isLeftMouseButton(e))
-				{
-					return;
-				}
-				boolean on = get.getAsBoolean();
-				// Turning off the last filter would hide everything, so that click does nothing
-				if (on && (matchSource ? 1 : 0) + (matchLocation ? 1 : 0) + (matchItem ? 1 : 0) == 1)
-				{
-					return;
-				}
-				set.accept(!on);
-				style.run();
-				if (!searchBar.getText().trim().isEmpty())
-				{
-					renderLoot();
-				}
+				box.setSelected(true);
+				return;
+			}
+			set.accept(on);
+			if (!searchBar.getText().trim().isEmpty())
+			{
+				renderLoot();
 			}
 		});
-		return chip;
+		return box;
 	}
 
 	private String filterNames()
