@@ -12,6 +12,7 @@ import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.LootSourceType;
 import io.lupix.runelite.bankauditor.loot.LootStateCodec;
+import io.lupix.runelite.bankauditor.loot.NativeLootSources;
 import io.lupix.runelite.bankauditor.loot.TripLog;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.sell.KeepList;
@@ -84,6 +85,7 @@ import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
@@ -209,6 +211,12 @@ public class BankAuditorPlugin extends Plugin
 	@Inject
 	private Gson gson;
 
+	@Inject
+	private EventBus eventBus;
+
+	@Inject
+	private NativeLootSources nativeSources;
+
 	// Everything below is only touched on the client thread unless marked volatile
 
 	private LootStateCodec codec;
@@ -328,6 +336,8 @@ public class BankAuditorPlugin extends Plugin
 		codec = new LootStateCodec(gson);
 		keepList = KeepList.parse(config.keepList());
 		overlayManager.add(overlay);
+		nativeSources.start(this::eventLoot, () -> !useLootTracker());
+		eventBus.register(nativeSources);
 		if (config.showPanel())
 		{
 			addPanel();
@@ -365,6 +375,7 @@ public class BankAuditorPlugin extends Plugin
 	{
 		groundLoot.clear();
 		lunarChest.clear();
+		eventBus.unregister(nativeSources);
 		overlayManager.remove(overlay);
 		removePanel();
 		unregisterTag();
@@ -394,25 +405,35 @@ public class BankAuditorPlugin extends Plugin
 	// ------------------------------------------------------------------
 
 	/*
-	 * The Loot Tracker plugin turns NPC and player kills into LootReceived events and adds chests, clues, raids,
-	 * pickpocketing and so on. While it runs, LootReceived is the only source used, otherwise the same kill would
-	 * be counted twice. Without it, NPC and player kills still come in through the raw events.
+	 * Loot is found here by default: kills and pickpockets through the raw events, and chests, raids, clues,
+	 * opened items and the rest through NativeLootSources. With "Use Loot Tracker" on and that plugin running,
+	 * its LootReceived events are the only source instead, so nothing gets counted twice.
 	 */
+
+	private boolean useLootTracker()
+	{
+		return config.useLootTracker() && lootTrackerActive;
+	}
 
 	@Subscribe
 	public void onLootReceived(LootReceived event)
 	{
-		if (lootTrackerActive)
+		if (useLootTracker() && event.getItems() != null)
 		{
-			Collection<ItemStack> items = event.getItems();
-			if (LUNAR_CHEST.equals(event.getName()) && items != null)
-			{
-				items = unseenLunarLoot(items);
-			}
-			addLoot(event.getName(), event.getCombatLevel(),
+			eventLoot(event.getName(), event.getCombatLevel(),
 				event.getType() == null ? LootSourceType.OTHER : LootSourceType.fromName(event.getType().name()),
-				items);
+				event.getItems());
 		}
+	}
+
+	private void eventLoot(String source, LootSourceType type, Collection<ItemStack> items)
+	{
+		eventLoot(source, -1, type, items);
+	}
+
+	private void eventLoot(String source, int combatLevel, LootSourceType type, Collection<ItemStack> items)
+	{
+		addLoot(source, combatLevel, type, LUNAR_CHEST.equals(source) ? unseenLunarLoot(items) : items);
 	}
 
 	/**
@@ -436,7 +457,7 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onServerNpcLoot(ServerNpcLoot event)
 	{
-		if (!lootTrackerActive)
+		if (!useLootTracker())
 		{
 			// The server sends this for pickpocketing too, and then the items are already in the inventory
 			LootSourceType type = pickpocketTick == client.getTickCount() ? LootSourceType.PICKPOCKET : LootSourceType.NPC;
@@ -459,7 +480,7 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onPlayerLootReceived(PlayerLootReceived event)
 	{
-		if (!lootTrackerActive && !inMinigamePvp())
+		if (!useLootTracker() && !inMinigamePvp())
 		{
 			Player player = event.getPlayer();
 			addLoot(player == null ? null : player.getName(), player == null ? -1 : player.getCombatLevel(),

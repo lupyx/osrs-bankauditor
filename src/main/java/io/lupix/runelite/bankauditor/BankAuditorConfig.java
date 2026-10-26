@@ -57,11 +57,24 @@ public interface BankAuditorConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "useLootTracker",
+		name = "Use Loot Tracker",
+		description = "Read loot from RuneLite's Loot Tracker plugin instead of finding it here."
+			+ " Only works while the Loot Tracker is turned on; otherwise the plugin's own tracking is used.",
+		section = lootSection,
+		position = 1
+	)
+	default boolean useLootTracker()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "historyDays",
 		name = "Keep history for",
 		description = "Loot records older than this are removed",
 		section = lootSection,
-		position = 1
+		position = 2
 	)
 	@Range(min = 1, max = 365)
 	@Units(" days")
@@ -75,7 +88,7 @@ public interface BankAuditorConfig extends Config
 		name = "Max loot records",
 		description = "The oldest records are removed past this many",
 		section = lootSection,
-		position = 2
+		position = 3
 	)
 	@Range(min = 50, max = 1000)
 	default int maxRecords()
@@ -88,7 +101,7 @@ public interface BankAuditorConfig extends Config
 		name = "Side panel",
 		description = "Show the Bank Auditor side panel with your loot history and sell list",
 		section = lootSection,
-		position = 3
+		position = 4
 	)
 	default boolean showPanel()
 	{
@@ -101,7 +114,7 @@ public interface BankAuditorConfig extends Config
 		description = "In the side panel, show only the higher of the GE and high alch value for each item."
 			+ " Hover it to see both.",
 		section = lootSection,
-		position = 4
+		position = 5
 	)
 	default boolean bestValueOnly()
 	{

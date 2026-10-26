@@ -42,6 +42,7 @@ Every part can be turned off on its own.
 | Section | Setting | Default |
 | --- | --- | --- |
 | Loot tracking | Track loot | on |
+| | Use Loot Tracker | off |
 | | Keep history for | 30 days |
 | | Max loot records | 500 |
 | | Side panel | on |
@@ -78,7 +79,7 @@ Data is saved per account in your RuneLite profile.
 
 ## Loot sources
 
-NPC kills, PvP kills and pickpocketing are always tracked. Chests, clue caskets, raids, minigames and the rest come from RuneLite's Loot Tracker plugin, so keep it enabled if you want those too. While the Loot Tracker is on, Bank Auditor reads everything from it so nothing gets counted twice. The Loot Tracker reports the Lunar Chest from Moons of Peril every time you open it, so Bank Auditor only counts what is new since you last looked. Loot sent straight to the bank from a reward chest is counted as loot the next time you open a bank. Kills in Last Man Standing and Soul Wars are skipped, like the Loot Tracker does.
+Bank Auditor finds loot on its own: NPC and PvP kills, pickpocketing, reward chests like Barrows, the raids, the Lunar Chest and the Colosseum, clue caskets, keyed chests, opened caskets, sacks and crates, bird houses, Tempoross, Wintertodt, Guardians of the Rift and the other minigames RuneLite's Loot Tracker knows about. It works out what you got the same way the Loot Tracker does, so the two agree. If you'd rather it read everything from the Loot Tracker, turn on Use Loot Tracker; that only applies while the Loot Tracker plugin is running, and the plugin goes back to its own tracking when it isn't. The Lunar Chest is reported every time you open it, so only what is new since you last looked is counted. Loot sent straight to the bank from a reward chest is counted as loot the next time you open a bank. Kills in Last Man Standing and Soul Wars are skipped, like the Loot Tracker does.
 
 ## Known limits
 
@@ -126,3 +127,5 @@ That builds the plugin with Gradle and JDK 11 inside the container and runs the 
 ## License
 
 BSD 2-Clause, see [LICENSE](LICENSE).
+
+The loot detection in `NativeLootSources.java` is adapted from RuneLite's Loot Tracker plugin, which is also BSD 2-Clause. Its original copyright notice is kept at the top of that file.
