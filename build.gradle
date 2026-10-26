@@ -78,7 +78,10 @@ tasks.register('run', JavaExec) {
 	classpath = configurations.testRuntimeClasspath
 	mainClass = 'net.runelite.client.RuneLite'
 
-	jvmArgs '-ea'
+	// Assertions stay on so RuneLite's client thread checks catch mistakes in our code. The GPU plugin's are
+	// turned off: ModelUploader.uploadSortedModel asserts on some transparent models from the game, and the
+	// AssertionError skips its catch (Exception) and breaks rendering. Normal clients run without -ea anyway.
+	jvmArgs '-ea', '-da:net.runelite.client.plugins.gpu...'
 	args '--developer-mode'
 	if (project.hasProperty('profile')) {
 		args '--profile', project.property('profile')
