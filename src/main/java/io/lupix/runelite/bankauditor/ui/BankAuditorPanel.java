@@ -60,7 +60,7 @@ import net.runelite.client.util.ImageUtil;
 
 /**
  * Side panel with two tabs: recent loot (what, when, from what and where) and the sell list.
- * The loot tab can show each drop on its own or combine them by location, NPC or day.
+ * The loot tab can show each drop on its own or combine them by source, time range, trip or slayer task.
  * All methods must be called on the Swing event thread.
  */
 public class BankAuditorPanel extends PluginPanel
@@ -630,11 +630,25 @@ public class BankAuditorPanel extends PluginPanel
 		{
 			ZoneId zone = ZoneId.systemDefault();
 			List<LootGroups.Group> groups = LootGroups.group(records, mode, interval, trips, zone);
-			String noun = mode == LootGroups.Mode.LOCATION ? "location" : mode == LootGroups.Mode.SOURCE ? "source"
-				: mode == LootGroups.Mode.TRIP ? "trip" : interval.getLabel().toLowerCase(Locale.ENGLISH);
+			if (mode == LootGroups.Mode.TASK)
+			{
+				// The task view leaves out drops that weren't for a task, so only count the ones it shows
+				totalCount = 0;
+				for (LootGroups.Group group : groups)
+				{
+					totalCount += group.getDrops();
+				}
+			}
+			String noun = mode == LootGroups.Mode.SOURCE ? "source" : mode == LootGroups.Mode.TRIP ? "trip"
+				: mode == LootGroups.Mode.TASK ? "task" : interval.getLabel().toLowerCase(Locale.ENGLISH);
 			String count = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s");
 			String drops = Formats.commas(totalCount) + matching + (totalCount == 1 ? " drop" : " drops");
-			if (groups.size() > MAX_GROUPS)
+			if (groups.isEmpty())
+			{
+				setSummary("No slayer task drops" + (query.isEmpty() ? " yet" : matching),
+					"Drops from kills that count for your slayer task show up here, one box per task");
+			}
+			else if (groups.size() > MAX_GROUPS)
 			{
 				setSummary(MAX_GROUPS + " of " + count + ", " + drops, "The latest " + MAX_GROUPS + " of " + count + ", from " + drops);
 			}
@@ -645,7 +659,8 @@ public class BankAuditorPanel extends PluginPanel
 			for (LootGroups.Group group : groups.subList(0, Math.min(MAX_GROUPS, groups.size())))
 			{
 				String title = mode == LootGroups.Mode.TIME ? LootGroups.periodTitle(group.getTitle(), interval, lootNow, zone)
-					: mode == LootGroups.Mode.TRIP ? LootGroups.tripTitle(group, lootNow, zone) : group.getTitle();
+					: mode == LootGroups.Mode.TRIP ? LootGroups.tripTitle(group, lootNow, zone)
+					: mode == LootGroups.Mode.TASK ? group.getTaskName() : group.getTitle();
 				lootList.add(groupBox(group, title));
 				lootList.add(gap());
 			}
@@ -745,9 +760,10 @@ public class BankAuditorPanel extends PluginPanel
 		String when = mode == LootGroups.Mode.TIME ? null
 			: mode == LootGroups.Mode.TRIP ? Formats.duration(group.getNewest() - group.getOldest())
 			: Formats.ago(lootNow, group.getNewest());
-		boolean titleSearched = mode == LootGroups.Mode.LOCATION ? matchLocation : mode == LootGroups.Mode.SOURCE && matchSource;
-		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, icons.spriteFor(group.getTopSource(), group.getTopSourceType()), when, detail,
-			group.getLines());
+		boolean titleSearched = mode == LootGroups.Mode.SOURCE && matchSource;
+		int sprite = mode == LootGroups.Mode.TASK ? icons.taskSprite(group.getTaskName())
+			: icons.spriteFor(group.getTopSource(), group.getTopSourceType());
+		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, sprite, when, detail, group.getLines());
 	}
 
 	/**

@@ -66,6 +66,40 @@ public class LootStateCodecTest
 	}
 
 	@Test
+	public void slayerTaskIsSavedOnDropsAndOldDataHasNone()
+	{
+		LootHistory history = new LootHistory();
+		SlayerTask task = new SlayerTask("Abyssal demons", 500);
+		history.add(new LootRecord(1000, "Abyssal demon", LootSourceType.NPC, 124, null,
+			Arrays.asList(new LootItem(560, "Death rune", 20, 200)), task));
+
+		String json = codec.writeHistory(history);
+		assertEquals(task, codec.readHistory(json).oldestFirst().get(0).getTask());
+
+		LootHistory old = codec.readHistory("[{\"t\":1000,\"s\":\"Vorkath\",\"k\":\"NPC\",\"c\":732,\"i\":[]}]");
+		assertNull(old.oldestFirst().get(0).getTask());
+	}
+
+	@Test
+	public void currentSlayerTaskRoundTrip()
+	{
+		SlayerTaskTracker tracker = new SlayerTaskTracker();
+		tracker.update("Abyssal demons", 120, 180, 500, 1);
+		String json = codec.writeSlayerTask(tracker.save());
+
+		SlayerTaskTracker loaded = new SlayerTaskTracker();
+		loaded.restore(codec.readSlayerTask(json));
+		assertEquals(tracker.getCurrent(), loaded.getCurrent());
+		// Logging back in to the same task keeps it, even after more kills on another client
+		loaded.update("Abyssal demons", 100, 180, 9_000, 50);
+		assertEquals(500, loaded.getCurrent().getStart());
+
+		assertNull(codec.writeSlayerTask(new SlayerTaskTracker().save()));
+		assertNull(codec.readSlayerTask("not json"));
+		assertNull(codec.readSlayerTask(null));
+	}
+
+	@Test
 	public void tripsRoundTrip()
 	{
 		TripLog trips = new TripLog(Arrays.asList(1000L, 5000L));

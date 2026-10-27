@@ -39,13 +39,15 @@ public final class SourceIcons
 	private final Map<String, Integer> byName = new HashMap<>();
 	private final int npcSprite;
 	private final int pickpocketSprite;
+	private final int slayerSprite;
 
 	/**
 	 * @param bossSprites      boss name to sprite id, from the hiscores
 	 * @param npcSprite        for any other NPC, player or event
 	 * @param pickpocketSprite for pickpocketing
+	 * @param slayerSprite     for slayer tasks that aren't a boss
 	 */
-	public SourceIcons(Map<String, Integer> bossSprites, int npcSprite, int pickpocketSprite)
+	public SourceIcons(Map<String, Integer> bossSprites, int npcSprite, int pickpocketSprite, int slayerSprite)
 	{
 		for (Map.Entry<String, Integer> boss : bossSprites.entrySet())
 		{
@@ -61,6 +63,7 @@ public final class SourceIcons
 		}
 		this.npcSprite = npcSprite;
 		this.pickpocketSprite = pickpocketSprite;
+		this.slayerSprite = slayerSprite;
 	}
 
 	public int spriteFor(String source, LootSourceType type)
@@ -71,6 +74,27 @@ public final class SourceIcons
 			return boss;
 		}
 		return type == LootSourceType.PICKPOCKET ? pickpocketSprite : npcSprite;
+	}
+
+	/**
+	 * The boss icon for a boss task like The Alchemical Hydra, otherwise the slayer skill icon.
+	 */
+	public int taskSprite(String taskName)
+	{
+		if (taskName != null)
+		{
+			String name = taskName.trim();
+			Integer boss = byName.get(key(name));
+			if (boss == null && name.regionMatches(true, 0, "The ", 0, 4))
+			{
+				boss = byName.get(key(name.substring(4)));
+			}
+			if (boss != null)
+			{
+				return boss;
+			}
+		}
+		return slayerSprite;
 	}
 
 	private static String key(String name)

@@ -13,6 +13,8 @@ import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.LootSourceType;
 import io.lupix.runelite.bankauditor.loot.LootStateCodec;
 import io.lupix.runelite.bankauditor.loot.NativeLootSources;
+import io.lupix.runelite.bankauditor.loot.SlayerTask;
+import io.lupix.runelite.bankauditor.loot.SlayerTaskTracker;
 import io.lupix.runelite.bankauditor.loot.TripLog;
 import io.lupix.runelite.bankauditor.sell.ItemSummary;
 import io.lupix.runelite.bankauditor.sell.KeepList;
@@ -76,13 +78,17 @@ import net.runelite.api.events.ItemSpawned;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.VarClientIntChanged;
+import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.SpriteID;
 import net.runelite.api.gameval.VarClientID;
+import net.runelite.api.gameval.VarPlayerID;
+import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
@@ -136,7 +142,16 @@ public class BankAuditorPlugin extends Plugin
 	static final String KEY_HISTORY = "history";
 	static final String KEY_BANK = "bankSnapshot";
 	static final String KEY_TRIPS = "tripEnds";
-	private static final Set<String> STATE_KEYS = Set.of(KEY_LEDGER, KEY_HISTORY, KEY_BANK, KEY_TRIPS);
+	static final String KEY_SLAYER_TASK = "slayerTask";
+	private static final Set<String> STATE_KEYS = Set.of(KEY_LEDGER, KEY_HISTORY, KEY_BANK, KEY_TRIPS, KEY_SLAYER_TASK);
+	/**
+	 * The slayer target id that means the task is a boss, picked by another varbit.
+	 */
+	private static final int SLAYER_BOSS_TASK = 98;
+	/**
+	 * Ticks to wait after logging in before reading the slayer task, so all of it has arrived.
+	 */
+	private static final int SLAYER_SETTLE_TICKS = 2;
 
 	/**
 	 * Containers must have been still for this many ticks before the ledger trusts them.
@@ -232,6 +247,10 @@ public class BankAuditorPlugin extends Plugin
 	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
 	private final GroundLootTracker groundLoot = new GroundLootTracker();
 	private final ChestLoot lunarChest = new ChestLoot();
+	private final SlayerTaskTracker slayerTask = new SlayerTaskTracker();
+	private boolean slayerDirty;
+	private boolean slayerCheck;
+	private int slayerReadAfter;
 	/**
 	 * Item a High Level Alchemy cast was clicked on, or -1.
 	 */
@@ -395,6 +414,8 @@ public class BankAuditorPlugin extends Plugin
 			ledger = new LootLedger();
 			history = new LootHistory();
 			trips = new TripLog();
+			slayerTask.clear();
+			slayerCheck = false;
 			bankCounts = null;
 			bankTrusted = false;
 			bankBeforeHiddenDeposit = null;
@@ -556,7 +577,8 @@ public class BankAuditorPlugin extends Plugin
 		}
 
 		long now = System.currentTimeMillis();
-		LootRecord record = new LootRecord(now, source, type, combatLevel, currentLocation(), items);
+		SlayerTask task = type == LootSourceType.NPC ? slayerTask.taskFor(source, tickCounter) : null;
+		LootRecord record = new LootRecord(now, source, type, combatLevel, currentLocation(), items, task);
 		history.add(record);
 		if (config.dropPopups())
 		{
@@ -1061,6 +1083,60 @@ public class BankAuditorPlugin extends Plugin
 	}
 
 	@Subscribe
+	public void onVarbitChanged(VarbitChanged event)
+	{
+		int varp = event.getVarpId();
+		if (varp == VarPlayerID.SLAYER_COUNT || varp == VarPlayerID.SLAYER_TARGET || varp == VarPlayerID.SLAYER_COUNT_ORIGINAL
+			|| event.getVarbitId() == VarbitID.SLAYER_TARGET_BOSSID)
+		{
+			// Read once the tick is over, when every part of a change has arrived
+			slayerCheck = true;
+		}
+	}
+
+	/**
+	 * Reads the slayer task the same way RuneLite's Slayer plugin does, from the task count and the slayer
+	 * task tables in the game cache.
+	 */
+	private void readSlayerTask()
+	{
+		int remaining = client.getVarpValue(VarPlayerID.SLAYER_COUNT);
+		String name = null;
+		if (remaining > 0)
+		{
+			int taskId = client.getVarpValue(VarPlayerID.SLAYER_TARGET);
+			Integer row = null;
+			if (taskId == SLAYER_BOSS_TASK)
+			{
+				List<Integer> bosses = client.getDBRowsByValue(DBTableID.SlayerTaskSublist.ID, DBTableID.SlayerTaskSublist.COL_TASK_SUBTABLE_ID,
+					0, client.getVarbitValue(VarbitID.SLAYER_TARGET_BOSSID));
+				if (!bosses.isEmpty())
+				{
+					row = (Integer) client.getDBTableField(bosses.get(0), DBTableID.SlayerTaskSublist.COL_TASK, 0)[0];
+				}
+			}
+			else
+			{
+				List<Integer> tasks = client.getDBRowsByValue(DBTableID.SlayerTask.ID, DBTableID.SlayerTask.COL_ID, 0, taskId);
+				if (!tasks.isEmpty())
+				{
+					row = tasks.get(0);
+				}
+			}
+			if (row == null)
+			{
+				// Not known yet, so keep what we had rather than ending the task
+				return;
+			}
+			name = (String) client.getDBTableField(row, DBTableID.SlayerTask.COL_NAME_UPPERCASE, 0)[0];
+		}
+		if (slayerTask.update(name, remaining, client.getVarpValue(VarPlayerID.SLAYER_COUNT_ORIGINAL), System.currentTimeMillis(), tickCounter))
+		{
+			slayerDirty = true;
+		}
+	}
+
+	@Subscribe
 	public void onGameTick(GameTick event)
 	{
 		checkBankCloseRace();
@@ -1071,6 +1147,12 @@ public class BankAuditorPlugin extends Plugin
 		tickCounter++;
 		// Tooltips say "5 min ago", and prices change, so rebuild them now and then
 		clearCaches();
+
+		if (slayerCheck && tickCounter >= slayerReadAfter && client.getGameState() == GameState.LOGGED_IN)
+		{
+			slayerCheck = false;
+			readSlayerTask();
+		}
 
 		if (visitEnding && (tickCounter - visitEndTick >= VISIT_END_MAX_TICKS
 			|| (tickCounter - visitEndTick >= QUIET_TICKS && tickCounter - lastContainerChange >= QUIET_TICKS)))
@@ -1545,7 +1627,7 @@ public class BankAuditorPlugin extends Plugin
 				bosses.put(skill.getName(), skill.getSpriteId());
 			}
 		}
-		return new SourceIcons(bosses, SpriteID.SideIcons.COMBAT, SpriteID.Staticons.THIEVING);
+		return new SourceIcons(bosses, SpriteID.SideIcons.COMBAT, SpriteID.Staticons.THIEVING, SpriteID.Staticons2.SLAYER);
 	}
 
 	private void clearLootData()
@@ -1638,6 +1720,8 @@ public class BankAuditorPlugin extends Plugin
 		if (event.getGameState() == GameState.LOGGED_IN)
 		{
 			switchProfile(configManager.getRSProfileKey());
+			slayerCheck = true;
+			slayerReadAfter = tickCounter + SLAYER_SETTLE_TICKS;
 		}
 		else if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
@@ -1713,6 +1797,7 @@ public class BankAuditorPlugin extends Plugin
 			ledger = new LootLedger();
 			history = new LootHistory();
 			trips = new TripLog();
+			slayerTask.clear();
 			bankCounts = null;
 		}
 		else
@@ -1720,10 +1805,14 @@ public class BankAuditorPlugin extends Plugin
 			ledger = codec.readLedger(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_LEDGER));
 			history = codec.readHistory(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_HISTORY));
 			trips = codec.readTrips(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_TRIPS));
+			slayerTask.restore(codec.readSlayerTask(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_SLAYER_TASK)));
 			bankCounts = codec.readCounts(configManager.getConfiguration(BankAuditorConfig.GROUP, newProfileKey, KEY_BANK));
 		}
 		ledgerDirty = false;
 		tripsDirty = false;
+		slayerDirty = false;
+		slayerCheck = true;
+		slayerReadAfter = tickCounter + SLAYER_SETTLE_TICKS;
 		historyDirty = pruneHistory(System.currentTimeMillis());
 		bankDirty = false;
 		bankTrusted = false;
@@ -1763,6 +1852,19 @@ public class BankAuditorPlugin extends Plugin
 		{
 			configManager.setConfiguration(BankAuditorConfig.GROUP, profileKey, KEY_TRIPS, codec.writeTrips(trips));
 			tripsDirty = false;
+		}
+		if (everything || slayerDirty)
+		{
+			String task = codec.writeSlayerTask(slayerTask.save());
+			if (task == null)
+			{
+				configManager.unsetConfiguration(BankAuditorConfig.GROUP, profileKey, KEY_SLAYER_TASK);
+			}
+			else
+			{
+				configManager.setConfiguration(BankAuditorConfig.GROUP, profileKey, KEY_SLAYER_TASK, task);
+			}
+			slayerDirty = false;
 		}
 		if ((everything || bankDirty) && bankCounts != null)
 		{

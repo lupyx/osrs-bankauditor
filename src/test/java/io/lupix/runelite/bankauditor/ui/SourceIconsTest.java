@@ -10,6 +10,7 @@ public class SourceIconsTest
 {
 	private static final int NPC = 1;
 	private static final int THIEVING = 2;
+	private static final int SLAYER = 3;
 
 	private static SourceIcons icons()
 	{
@@ -17,7 +18,8 @@ public class SourceIconsTest
 		bosses.put("Vorkath", 100);
 		bosses.put("Barrows Chests", 101);
 		bosses.put("Grotesque Guardians", 102);
-		return new SourceIcons(bosses, NPC, THIEVING);
+		bosses.put("Alchemical Hydra", 103);
+		return new SourceIcons(bosses, NPC, THIEVING, SLAYER);
 	}
 
 	@Test
@@ -37,5 +39,14 @@ public class SourceIconsTest
 		assertEquals(THIEVING, icons().spriteFor("Master Farmer", LootSourceType.PICKPOCKET));
 		// No boss sprite for this alias's target, so it falls back
 		assertEquals(NPC, icons().spriteFor("Gauntlet", LootSourceType.EVENT));
+	}
+
+	@Test
+	public void tasksUseTheBossIconOrTheSlayerIcon()
+	{
+		assertEquals(100, icons().taskSprite("Vorkath"));
+		assertEquals(103, icons().taskSprite("The Alchemical Hydra"));
+		assertEquals(SLAYER, icons().taskSprite("Abyssal demons"));
+		assertEquals(SLAYER, icons().taskSprite(null));
 	}
 }

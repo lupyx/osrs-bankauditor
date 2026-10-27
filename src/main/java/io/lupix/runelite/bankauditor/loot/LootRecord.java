@@ -24,8 +24,19 @@ public final class LootRecord
 	private final LootLocation location;
 	@SerializedName("i")
 	private final List<LootItem> items;
+	@SerializedName("st")
+	private final SlayerTask task;
 
 	public LootRecord(long timestamp, String source, LootSourceType type, int combatLevel, LootLocation location, List<LootItem> items)
+	{
+		this(timestamp, source, type, combatLevel, location, items, null);
+	}
+
+	/**
+	 * @param task the slayer task the kill counted for, or null
+	 */
+	public LootRecord(long timestamp, String source, LootSourceType type, int combatLevel, LootLocation location, List<LootItem> items,
+		SlayerTask task)
 	{
 		this.timestamp = timestamp;
 		this.source = source;
@@ -33,6 +44,7 @@ public final class LootRecord
 		this.combatLevel = combatLevel;
 		this.location = location;
 		this.items = items == null ? new ArrayList<>() : new ArrayList<>(items);
+		this.task = task;
 	}
 
 	/**
@@ -67,6 +79,14 @@ public final class LootRecord
 	public LootLocation getLocation()
 	{
 		return location;
+	}
+
+	/**
+	 * The slayer task this kill counted for, or null when it wasn't a task kill.
+	 */
+	public SlayerTask getTask()
+	{
+		return task;
 	}
 
 	public List<LootItem> getItems()
@@ -126,7 +146,7 @@ public final class LootRecord
 		{
 			return this;
 		}
-		return new LootRecord(timestamp, source, type, combatLevel, location, updated);
+		return new LootRecord(timestamp, source, type, combatLevel, location, updated, task);
 	}
 
 	/**
@@ -151,12 +171,9 @@ public final class LootRecord
 		{
 			return this;
 		}
-		return new LootRecord(timestamp, source, type, combatLevel, location, updated);
+		return new LootRecord(timestamp, source, type, combatLevel, location, updated, task);
 	}
 
-	/**
-	 * The source name with its combat level when it has one, for example "Vorkath (lvl 732)".
-	 */
 	/**
 	 * Where the loot dropped, for display, or null when unknown. The area name is left out when it only
 	 * repeats the source, like Vorkath at Vorkath.
@@ -175,6 +192,9 @@ public final class LootRecord
 		return location.describe();
 	}
 
+	/**
+	 * The source name with its combat level when it has one, for example "Vorkath (lvl 732)".
+	 */
 	public String describeSource()
 	{
 		if (combatLevel > 0)
@@ -201,13 +221,14 @@ public final class LootRecord
 			&& Objects.equals(source, other.source)
 			&& type == other.type
 			&& Objects.equals(location, other.location)
-			&& Objects.equals(items, other.items);
+			&& Objects.equals(items, other.items)
+			&& Objects.equals(task, other.task);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(timestamp, source, type, combatLevel, location, items);
+		return Objects.hash(timestamp, source, type, combatLevel, location, items, task);
 	}
 
 	@Override

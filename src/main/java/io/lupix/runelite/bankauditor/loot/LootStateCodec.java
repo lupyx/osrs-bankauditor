@@ -139,4 +139,31 @@ public final class LootStateCodec
 			return null;
 		}
 	}
+
+	/**
+	 * The slayer task being followed, or null to save that there is none.
+	 */
+	public String writeSlayerTask(SlayerTaskTracker.Saved task)
+	{
+		return task == null ? null : gson.toJson(task);
+	}
+
+	/**
+	 * @return the saved task, or null when nothing (valid) was saved
+	 */
+	public SlayerTaskTracker.Saved readSlayerTask(String json)
+	{
+		if (json == null || json.isEmpty())
+		{
+			return null;
+		}
+		try
+		{
+			return gson.fromJson(json, SlayerTaskTracker.Saved.class);
+		}
+		catch (JsonParseException | IllegalStateException | ClassCastException e)
+		{
+			return null;
+		}
+	}
 }

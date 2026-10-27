@@ -22,17 +22,17 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Combines loot records into one box per location, source, stretch of time or trip for the side panel.
+ * Combines loot records into one box per source, stretch of time, trip or slayer task for the side panel.
  */
 public final class LootGroups
 {
 	public enum Mode
 	{
 		DEFAULT("Default", "view_list.png", "Every drop on its own"),
-		LOCATION("Location", "view_location.png", "Combine drops from the same area on any world"),
 		SOURCE("Source", "view_source.png", "Combine drops from the same NPC or source"),
 		TIME("Time range", "view_day.png", "Combine drops by hour, day, week or month"),
-		TRIP("Trip", "view_trip.png", "Combine drops into trips, which end when you bank");
+		TRIP("Trip", "view_trip.png", "Combine drops into trips, which end when you bank"),
+		TASK("Slayer task", "view_slayer.png", "Combine drops from kills that counted for each slayer task");
 
 		private final String label;
 		private final String icon;
@@ -262,6 +262,7 @@ public final class LootGroups
 	public static final class Group
 	{
 		private final String title;
+		private String taskName;
 		private String detail;
 		private int drops;
 		private long oldest = Long.MAX_VALUE;
@@ -280,6 +281,14 @@ public final class LootGroups
 		public String getTitle()
 		{
 			return title;
+		}
+
+		/**
+		 * The task's name, in the slayer task view.
+		 */
+		public String getTaskName()
+		{
+			return taskName;
 		}
 
 		/**
@@ -344,7 +353,7 @@ public final class LootGroups
 	 * @param records any order
 	 * @param mode    anything but {@link Mode#DEFAULT}, which shows records as they are
 	 * @param trips   where trips ended, for {@link Mode#TRIP}
-	 * @return groups with the most recent drop first
+	 * @return groups with the most recent drop first. The slayer task view leaves out drops that weren't for a task.
 	 */
 	public static List<Group> group(List<LootRecord> records, Mode mode, Interval interval, TripLog trips, ZoneId zone)
 	{
@@ -353,11 +362,6 @@ public final class LootGroups
 		String joiner;
 		switch (mode)
 		{
-			case LOCATION:
-				key = LootGroups::place;
-				other = LootRecord::getSource;
-				joiner = " from ";
-				break;
 			case SOURCE:
 				key = LootRecord::getSource;
 				other = LootGroups::place;
@@ -373,6 +377,12 @@ public final class LootGroups
 				other = LootRecord::getSource;
 				joiner = " from ";
 				break;
+			case TASK:
+				// Each assignment gets its own box, even two of the same monster in a row
+				key = r -> String.valueOf(r.getTask().getStart());
+				other = LootRecord::getSource;
+				joiner = " from ";
+				break;
 			default:
 				throw new IllegalArgumentException("Nothing to group by in " + mode);
 		}
@@ -380,7 +390,16 @@ public final class LootGroups
 		Map<String, Group> groups = new LinkedHashMap<>();
 		for (LootRecord record : records)
 		{
+			if (mode == Mode.TASK && record.getTask() == null)
+			{
+				// Only kills that counted for a task
+				continue;
+			}
 			Group group = groups.computeIfAbsent(key.apply(record), Group::new);
+			if (mode == Mode.TASK)
+			{
+				group.taskName = record.getTask().getName();
+			}
 			group.drops++;
 			group.oldest = Math.min(group.oldest, record.getTimestamp());
 			group.newest = Math.max(group.newest, record.getTimestamp());

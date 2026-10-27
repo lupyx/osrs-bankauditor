@@ -4,6 +4,7 @@ import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.LootSourceType;
+import io.lupix.runelite.bankauditor.loot.SlayerTask;
 import io.lupix.runelite.bankauditor.loot.TripLog;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -33,6 +34,11 @@ public class LootGroupsTest
 			region == 0 ? null : new LootLocation(1, 2, 0, region, world), Arrays.asList(items));
 	}
 
+	private static LootRecord taskDrop(long hoursAgo, String source, SlayerTask task, LootItem... items)
+	{
+		return new LootRecord(NOW - hoursAgo * HOUR, source, LootSourceType.NPC, 0, null, Arrays.asList(items), task);
+	}
+
 	private static LootItem runes(long quantity, long price)
 	{
 		return new LootItem(RUNE, "Death rune", quantity, price);
@@ -44,7 +50,7 @@ public class LootGroupsTest
 	}
 
 	@Test
-	public void locationCombinesWorldsAndSources()
+	public void sourceCombinesWorldsAndAddsUpItems()
 	{
 		List<LootRecord> records = Arrays.asList(
 			drop(1, "Goblin", LUMBRIDGE, 301, runes(10, 200), bones(1)),
@@ -52,21 +58,21 @@ public class LootGroupsTest
 			drop(3, "Cow", LUMBRIDGE, 330, bones(1)),
 			drop(4, "Goblin", LUMBRIDGE, 302, runes(5, 180)));
 
-		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.LOCATION, LootGroups.Interval.DAY, NO_TRIPS, ZONE);
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, NO_TRIPS, ZONE);
 
-		assertEquals(2, groups.size());
-		LootGroups.Group lumbridge = groups.get(0);
-		assertEquals("Lumbridge", lumbridge.getTitle());
-		assertEquals("3 drops from Goblin, Cow", lumbridge.getDetail());
-		assertEquals(NOW - HOUR, lumbridge.getNewest());
-		assertEquals(2000 + 900, lumbridge.getTotalValue());
-		List<LootGroups.Line> lines = lumbridge.getLines();
+		assertEquals(3, groups.size());
+		LootGroups.Group goblin = groups.get(0);
+		assertEquals("Goblin", goblin.getTitle());
+		assertEquals("2 drops at Lumbridge", goblin.getDetail());
+		assertEquals(NOW - HOUR, goblin.getNewest());
+		assertEquals(2000 + 900, goblin.getTotalValue());
+		List<LootGroups.Line> lines = goblin.getLines();
 		assertEquals("Death rune", lines.get(0).getName());
 		assertEquals(15, lines.get(0).getQuantity());
 		assertEquals(2900, lines.get(0).getValue());
-		assertEquals(2, lines.get(1).getQuantity());
+		assertEquals(1, lines.get(1).getQuantity());
 		assertEquals("Vorkath", groups.get(1).getTitle());
-		assertEquals("1 drop from Vorkath", groups.get(1).getDetail());
+		assertEquals("1 drop at Vorkath", groups.get(1).getDetail());
 	}
 
 	@Test
@@ -76,10 +82,36 @@ public class LootGroupsTest
 			drop(1, "Goblin", 1, 301, bones(1)),
 			drop(2, "Goblin", 0, 0, bones(1)));
 
-		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.LOCATION, LootGroups.Interval.DAY, NO_TRIPS, ZONE);
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, NO_TRIPS, ZONE);
 
-		assertEquals("Region 1", groups.get(0).getTitle());
-		assertEquals("Unknown location", groups.get(1).getTitle());
+		assertEquals("2 drops at Region 1, Unknown location", groups.get(0).getDetail());
+	}
+
+	@Test
+	public void slayerTasksGetABoxEachAndOtherDropsAreLeftOut()
+	{
+		SlayerTask first = new SlayerTask("Abyssal demons", NOW - 10 * HOUR);
+		SlayerTask second = new SlayerTask("Abyssal demons", NOW - 3 * HOUR);
+		List<LootRecord> records = Arrays.asList(
+			taskDrop(1, "Greater abyssal demon", second, runes(10, 200)),
+			drop(2, "Goblin", LUMBRIDGE, 301, bones(1)),
+			taskDrop(2, "Abyssal demon", second, runes(5, 200)),
+			taskDrop(8, "Abyssal demon", first, runes(1, 200)));
+
+		List<LootGroups.Group> groups = LootGroups.group(records, LootGroups.Mode.TASK, LootGroups.Interval.DAY, NO_TRIPS, ZONE);
+
+		assertEquals(2, groups.size());
+		assertEquals("Abyssal demons", groups.get(0).getTaskName());
+		assertEquals("2 drops from Greater abyssal demon, Abyssal demon", groups.get(0).getDetail());
+		assertEquals(15, groups.get(0).getLines().get(0).getQuantity());
+		assertEquals("1 drop from Abyssal demon", groups.get(1).getDetail());
+	}
+
+	@Test
+	public void theLocationViewIsGone()
+	{
+		assertEquals(LootGroups.Mode.DEFAULT, LootGroups.Mode.fromName("LOCATION"));
+		assertEquals(LootGroups.Mode.TASK, LootGroups.Mode.values()[LootGroups.Mode.TRIP.ordinal() + 1]);
 	}
 
 	@Test
