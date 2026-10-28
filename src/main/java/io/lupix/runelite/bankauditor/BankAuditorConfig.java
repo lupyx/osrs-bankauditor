@@ -326,6 +326,42 @@ public interface BankAuditorConfig extends Config
 	void setLootTimeRange(String interval);
 
 	@ConfigItem(
+		keyName = "lootRangeFrom",
+		name = "",
+		description = "",
+		hidden = true
+	)
+	default String lootRangeFrom()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "lootRangeFrom",
+		name = "",
+		description = ""
+	)
+	void setLootRangeFrom(String date);
+
+	@ConfigItem(
+		keyName = "lootRangeTo",
+		name = "",
+		description = "",
+		hidden = true
+	)
+	default String lootRangeTo()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "lootRangeTo",
+		name = "",
+		description = ""
+	)
+	void setLootRangeTo(String date);
+
+	@ConfigItem(
 		keyName = "keepMenuOption",
 		name = "Keep menu option",
 		description = "Right-click option on bank and inventory items to add or remove them from the keep list",

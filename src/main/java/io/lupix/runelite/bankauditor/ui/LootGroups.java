@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -85,14 +86,17 @@ public final class LootGroups
 	}
 
 	/**
-	 * How much time one box covers in the time range view.
+	 * How much time one box covers in the time range view. {@link #CUSTOM} is one box for the dates the user
+	 * picked.
 	 */
 	public enum Interval
 	{
 		HOUR("Hour"),
 		DAY("Day"),
 		WEEK("Week"),
-		MONTH("Month");
+		MONTH("Month"),
+		YEAR("Year"),
+		CUSTOM("Custom range");
 
 		private final String label;
 
@@ -131,10 +135,92 @@ public final class LootGroups
 	private static final DateTimeFormatter DAY_MONTH_FORMAT = DateTimeFormatter.ofPattern("d MMMM", Locale.ENGLISH);
 	private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("MMMM", Locale.ENGLISH);
 	private static final DateTimeFormatter CLOCK_FORMAT = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH);
+	private static final DateTimeFormatter SHORT_DATE_FORMAT = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH);
 	/**
 	 * Key of the trip that is still going.
 	 */
 	static final String CURRENT_TRIP = "-1";
+	/**
+	 * Key of the one box in a custom range.
+	 */
+	static final String CUSTOM_RANGE = "range";
+
+	/**
+	 * The days a custom range covers, both ends included. Picked the wrong way round, it is turned around.
+	 */
+	public static final class DateRange
+	{
+		private final LocalDate from;
+		private final LocalDate to;
+
+		public DateRange(LocalDate from, LocalDate to)
+		{
+			boolean backwards = from.isAfter(to);
+			this.from = backwards ? to : from;
+			this.to = backwards ? from : to;
+		}
+
+		/**
+		 * The last 7 days up to today.
+		 */
+		public static DateRange lastWeek(long now, ZoneId zone)
+		{
+			LocalDate today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
+			return new DateRange(today.minusDays(6), today);
+		}
+
+		/**
+		 * The range saved as two ISO dates, or the last 7 days when either is missing or can't be read.
+		 */
+		public static DateRange parse(String from, String to, long now, ZoneId zone)
+		{
+			if (from != null && to != null)
+			{
+				try
+				{
+					return new DateRange(LocalDate.parse(from), LocalDate.parse(to));
+				}
+				catch (DateTimeParseException e)
+				{
+					// Fall through to the default
+				}
+			}
+			return lastWeek(now, zone);
+		}
+
+		public LocalDate getFrom()
+		{
+			return from;
+		}
+
+		public LocalDate getTo()
+		{
+			return to;
+		}
+
+		public boolean contains(long timestamp, ZoneId zone)
+		{
+			LocalDate date = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate();
+			return !date.isBefore(from) && !date.isAfter(to);
+		}
+
+		/**
+		 * "12 Oct to 20 Oct", or just "12 Oct" for one day. The year goes at the end when it isn't this year,
+		 * and on both ends when the range crosses into a new year.
+		 */
+		public String title(long now, ZoneId zone)
+		{
+			int thisYear = Instant.ofEpochMilli(now).atZone(zone).getYear();
+			String start = SHORT_DATE_FORMAT.format(from);
+			String end = SHORT_DATE_FORMAT.format(to);
+			if (from.getYear() != to.getYear())
+			{
+				return start + " " + from.getYear() + " to " + end + " " + to.getYear();
+			}
+			String year = to.getYear() == thisYear ? "" : " " + to.getYear();
+			return (from.equals(to) ? start : start + " to " + end) + year;
+		}
+	}
 
 	private LootGroups()
 	{
@@ -272,6 +358,7 @@ public final class LootGroups
 		private final Map<String, Integer> others = new LinkedHashMap<>();
 		private final Map<String, Integer> sources = new LinkedHashMap<>();
 		private final Map<String, LootSourceType> sourceTypes = new LinkedHashMap<>();
+		private final List<LootRecord> records = new ArrayList<>();
 
 		Group(String title)
 		{
@@ -339,6 +426,14 @@ public final class LootGroups
 		}
 
 		/**
+		 * The drops in the group, in the order they were grouped.
+		 */
+		public List<LootRecord> getRecords()
+		{
+			return Collections.unmodifiableList(records);
+		}
+
+		/**
 		 * Kept items first, most valuable first, then what was left on the floor.
 		 */
 		public List<Line> getLines()
@@ -357,6 +452,19 @@ public final class LootGroups
 	 */
 	public static List<Group> group(List<LootRecord> records, Mode mode, Interval interval, TripLog trips, ZoneId zone)
 	{
+		return group(records, mode, interval, null, trips, zone);
+	}
+
+	/**
+	 * @param range the days of a {@link Interval#CUSTOM} range; drops outside it are left out
+	 */
+	public static List<Group> group(List<LootRecord> records, Mode mode, Interval interval, DateRange range, TripLog trips, ZoneId zone)
+	{
+		boolean inRange = mode == Mode.TIME && interval == Interval.CUSTOM;
+		if (inRange && range == null)
+		{
+			throw new IllegalArgumentException("A custom range needs its dates");
+		}
 		Function<LootRecord, String> key;
 		Function<LootRecord, String> other;
 		String joiner;
@@ -368,7 +476,7 @@ public final class LootGroups
 				joiner = " at ";
 				break;
 			case TIME:
-				key = r -> period(r.getTimestamp(), interval, zone);
+				key = inRange ? r -> CUSTOM_RANGE : r -> period(r.getTimestamp(), interval, zone);
 				other = LootRecord::getSource;
 				joiner = " from ";
 				break;
@@ -395,12 +503,17 @@ public final class LootGroups
 				// Only kills that counted for a task
 				continue;
 			}
+			if (inRange && !range.contains(record.getTimestamp(), zone))
+			{
+				continue;
+			}
 			Group group = groups.computeIfAbsent(key.apply(record), Group::new);
 			if (mode == Mode.TASK)
 			{
 				group.taskName = record.getTask().getName();
 			}
 			group.drops++;
+			group.records.add(record);
 			group.oldest = Math.min(group.oldest, record.getTimestamp());
 			group.newest = Math.max(group.newest, record.getTimestamp());
 			group.others.merge(other.apply(record), 1, Integer::sum);
@@ -462,6 +575,8 @@ public final class LootGroups
 				return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toString();
 			case MONTH:
 				return date.withDayOfMonth(1).toString();
+			case YEAR:
+				return date.withDayOfYear(1).toString();
 			default:
 				return date.toString();
 		}
@@ -509,6 +624,15 @@ public final class LootGroups
 					return "Last month";
 				}
 				return withYear(MONTH_FORMAT.format(start), start, today);
+			}
+			case YEAR:
+			{
+				int year = LocalDate.parse(period).getYear();
+				if (year == today.getYear())
+				{
+					return "This year";
+				}
+				return year == today.getYear() - 1 ? "Last year" : String.valueOf(year);
 			}
 			default:
 			{

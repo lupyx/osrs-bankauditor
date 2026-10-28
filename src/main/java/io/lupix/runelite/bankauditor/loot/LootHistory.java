@@ -1,8 +1,10 @@
 package io.lupix.runelite.bankauditor.loot;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Loot records in the order they were received, oldest first, with a cap on age and count.
@@ -77,6 +79,49 @@ public final class LootHistory
 				return;
 			}
 		}
+	}
+
+	/**
+	 * Deletes the given records. Each one is matched by identity, or else by its time, source and kind,
+	 * since a record can be swapped for an updated copy (alched, left on the floor) after the panel got it.
+	 * Each given record removes at most one record.
+	 *
+	 * @return how many records were removed
+	 */
+	public int remove(Collection<LootRecord> doomed)
+	{
+		int removed = 0;
+		for (LootRecord record : doomed)
+		{
+			int index = indexOf(record);
+			if (index >= 0)
+			{
+				records.remove(index);
+				removed++;
+			}
+		}
+		return removed;
+	}
+
+	private int indexOf(LootRecord record)
+	{
+		for (int i = 0; i < records.size(); i++)
+		{
+			if (records.get(i) == record)
+			{
+				return i;
+			}
+		}
+		for (int i = 0; i < records.size(); i++)
+		{
+			LootRecord other = records.get(i);
+			if (other.getTimestamp() == record.getTimestamp() && other.getType() == record.getType()
+				&& Objects.equals(other.getSource(), record.getSource()))
+			{
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/**

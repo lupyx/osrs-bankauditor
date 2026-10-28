@@ -31,6 +31,7 @@ import io.lupix.runelite.bankauditor.ui.TooltipText;
 import io.lupix.runelite.bankauditor.ui.ValueTiers;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -286,6 +287,10 @@ public class BankAuditorPlugin extends Plugin
 	 * The RuneScape profile the state above belongs to.
 	 */
 	private String profileKey;
+	/**
+	 * Between reaching the game and going back to the login screen, so loading screens and world hops count.
+	 */
+	private boolean loggedIn;
 
 	private int tickCounter;
 	private boolean bankOpen;
@@ -379,6 +384,7 @@ public class BankAuditorPlugin extends Plugin
 			if (client.getGameState() == GameState.LOGGED_IN)
 			{
 				switchProfile(configManager.getRSProfileKey());
+				loggedIn = true;
 				inventoryCounts = count(client.getItemContainer(InventoryID.INV));
 				wornCounts = count(client.getItemContainer(InventoryID.WORN));
 				ItemContainer bank = client.getItemContainer(InventoryID.BANK);
@@ -421,6 +427,7 @@ public class BankAuditorPlugin extends Plugin
 			bankBeforeHiddenDeposit = null;
 			clearCarriedCounts();
 			profileKey = null;
+			loggedIn = false;
 			bankOpen = false;
 			lastBankUpdate = -1;
 			visitEnding = false;
@@ -1522,8 +1529,15 @@ public class BankAuditorPlugin extends Plugin
 			return;
 		}
 		BankAuditorPanel newPanel = new BankAuditorPanel(itemManager, spriteManager, SOURCE_ICONS, () -> clientThread.invokeLater(this::clearLootData),
+			records -> clientThread.invokeLater(() -> deleteLoot(records)),
 			LootGroups.Mode.fromName(config.lootGrouping()), m -> config.setLootGrouping(m.name()),
 			LootGroups.Interval.fromName(config.lootTimeRange()), i -> config.setLootTimeRange(i.name()),
+			LootGroups.DateRange.parse(config.lootRangeFrom(), config.lootRangeTo(), System.currentTimeMillis(), ZoneId.systemDefault()),
+			r ->
+			{
+				config.setLootRangeFrom(r.getFrom().toString());
+				config.setLootRangeTo(r.getTo().toString());
+			},
 			() -> clientThread.invokeLater(() ->
 			{
 				endTrip();
@@ -1570,10 +1584,11 @@ public class BankAuditorPlugin extends Plugin
 		Map<Integer, ItemValue> values = itemValues(newest);
 		boolean bestValueOnly = config.bestValueOnly();
 		TripLog tripsNow = new TripLog(trips.getEnds());
+		boolean editable = lootEditable();
 
 		SwingUtilities.invokeLater(() ->
 		{
-			target.showLoot(newest, now, tiers, values, bestValueOnly, tripsNow);
+			target.showLoot(newest, now, tiers, values, bestValueOnly, tripsNow, editable);
 			target.showSellList(sell, bankSeen, tagEnabled);
 		});
 	}
@@ -1630,8 +1645,21 @@ public class BankAuditorPlugin extends Plugin
 		return new SourceIcons(bosses, SpriteID.SideIcons.COMBAT, SpriteID.Staticons.THIEVING, SpriteID.Staticons2.SLAYER);
 	}
 
+	/**
+	 * Whether loot can be cleared or deleted: only while logged in, so it is always the account that is
+	 * logged in that loses it.
+	 */
+	private boolean lootEditable()
+	{
+		return loggedIn && profileKey != null;
+	}
+
 	private void clearLootData()
 	{
+		if (!lootEditable())
+		{
+			return;
+		}
 		ledger.clear();
 		history.clear();
 		trips.clear();
@@ -1641,6 +1669,25 @@ public class BankAuditorPlugin extends Plugin
 		tripsDirty = true;
 		clearCaches();
 		saveState(true);
+		refreshPanel();
+	}
+
+	/**
+	 * Deletes drops from the history. What counts as loot in the bank stays as it is, like when old
+	 * history is pruned.
+	 */
+	private void deleteLoot(List<LootRecord> records)
+	{
+		if (!lootEditable())
+		{
+			return;
+		}
+		if (history.remove(records) > 0)
+		{
+			historyDirty = true;
+			clearCaches();
+			saveState(false);
+		}
 		refreshPanel();
 	}
 
@@ -1660,6 +1707,8 @@ public class BankAuditorPlugin extends Plugin
 		{
 			case "lootGrouping":
 			case "lootTimeRange":
+			case "lootRangeFrom":
+			case "lootRangeTo":
 				// Only the panel reads it, and the panel is what changed it
 				return;
 			case "keepList":
@@ -1722,6 +1771,12 @@ public class BankAuditorPlugin extends Plugin
 			switchProfile(configManager.getRSProfileKey());
 			slayerCheck = true;
 			slayerReadAfter = tickCounter + SLAYER_SETTLE_TICKS;
+			if (!loggedIn)
+			{
+				loggedIn = true;
+				// Brings back the delete buttons
+				refreshPanel();
+			}
 		}
 		else if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
@@ -1735,6 +1790,9 @@ public class BankAuditorPlugin extends Plugin
 			bankTrusted = false;
 			clearCarriedCounts();
 			clearCaches();
+			loggedIn = false;
+			// No ticks run on the login screen, so the delete buttons go now
+			refreshPanel();
 		}
 	}
 

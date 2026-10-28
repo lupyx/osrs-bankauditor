@@ -104,4 +104,38 @@ public class LootHistoryTest
 		assertEquals(LootSourceType.OTHER, event.getType());
 		assertTrue(event.getItems().isEmpty());
 	}
+
+	@Test
+	public void removesTheRecordsGivenEvenAfterTheyWereUpdated()
+	{
+		LootHistory history = new LootHistory();
+		LootRecord first = record(1 * HOUR, "Goblin", item(SHARK, 2));
+		LootRecord second = record(2 * HOUR, "Goblin", item(SHARK, 1));
+		LootRecord third = record(3 * HOUR, "Cow", item(WHIP, 1));
+		history.add(first);
+		history.add(second);
+		history.add(third);
+		// Some of the second drop stayed on the floor after the panel got it
+		history.replace(second, second.withLeft(SHARK, 1));
+
+		assertEquals(2, history.remove(Arrays.asList(first, second)));
+		List<LootRecord> left = history.oldestFirst();
+		assertEquals(1, left.size());
+		assertEquals("Cow", left.get(0).getSource());
+		assertEquals(0, history.remove(Collections.singletonList(first)));
+	}
+
+	@Test
+	public void removingOneOfTwoLookalikeDropsKeepsTheOther()
+	{
+		LootHistory history = new LootHistory();
+		LootRecord one = record(HOUR, "Goblin", item(SHARK, 1));
+		LootRecord two = record(HOUR, "Goblin", item(SHARK, 1));
+		history.add(one);
+		history.add(two);
+
+		assertEquals(1, history.remove(Collections.singletonList(two)));
+		assertEquals(1, history.size());
+		assertTrue(history.oldestFirst().get(0) == one);
+	}
 }

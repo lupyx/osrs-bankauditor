@@ -6,12 +6,15 @@ import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.LootSourceType;
 import io.lupix.runelite.bankauditor.loot.SlayerTask;
 import io.lupix.runelite.bankauditor.loot.TripLog;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public class LootGroupsTest
@@ -260,5 +263,72 @@ public class LootGroupsTest
 		assertEquals(4, group.getLines().get(1).getQuantity());
 		assertEquals(true, group.getLines().get(1).isLeft());
 		assertEquals(11 * 200, group.getTotalValue());
+	}
+
+	@Test
+	public void yearsAndACustomRange()
+	{
+		LootRecord today = drop(1, "Goblin", LUMBRIDGE, 301, runes(10, 200));
+		LootRecord tenDays = drop(24 * 10, "Vorkath", VORKATH, 301, runes(5, 200));
+		LootRecord lastYear = drop(24 * 300, "Goblin", LUMBRIDGE, 301, bones(1));
+		LootRecord longAgo = drop(24 * 800, "Goblin", LUMBRIDGE, 301, bones(1));
+		List<LootRecord> records = Arrays.asList(today, tenDays, lastYear, longAgo);
+
+		List<LootGroups.Group> years = LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.YEAR, NO_TRIPS, ZONE);
+		assertEquals(3, years.size());
+		assertEquals("This year", title(years.get(0), LootGroups.Interval.YEAR));
+		assertEquals("Last year", title(years.get(1), LootGroups.Interval.YEAR));
+		assertEquals("2024", title(years.get(2), LootGroups.Interval.YEAR));
+
+		// 22 October is today, so 12 October to today holds the drops of today and ten days ago
+		LootGroups.DateRange range = new LootGroups.DateRange(LocalDate.of(2026, 10, 22), LocalDate.of(2026, 10, 12));
+		assertEquals(LocalDate.of(2026, 10, 12), range.getFrom());
+		List<LootGroups.Group> custom = LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.CUSTOM, range, NO_TRIPS, ZONE);
+		assertEquals(1, custom.size());
+		assertEquals(2, custom.get(0).getDrops());
+		assertEquals(Arrays.asList(today, tenDays), custom.get(0).getRecords());
+		assertEquals(3000, custom.get(0).getTotalValue());
+
+		LootGroups.DateRange empty = new LootGroups.DateRange(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 5));
+		assertTrue(LootGroups.group(records, LootGroups.Mode.TIME, LootGroups.Interval.CUSTOM, empty, NO_TRIPS, ZONE).isEmpty());
+	}
+
+	@Test
+	public void customRangeDaysAndTitles()
+	{
+		LootGroups.DateRange range = new LootGroups.DateRange(LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 20));
+		long startOfTwelfth = ZonedDateTime.of(2026, 10, 12, 0, 0, 0, 0, ZONE).toInstant().toEpochMilli();
+		long endOfTwentieth = ZonedDateTime.of(2026, 10, 21, 0, 0, 0, 0, ZONE).toInstant().toEpochMilli() - 1;
+		assertTrue(range.contains(startOfTwelfth, ZONE));
+		assertTrue(range.contains(endOfTwentieth, ZONE));
+		assertFalse(range.contains(startOfTwelfth - 1, ZONE));
+		assertFalse(range.contains(endOfTwentieth + 1, ZONE));
+
+		assertEquals("12 Oct to 20 Oct", range.title(NOW, ZONE));
+		assertEquals("12 Oct", new LootGroups.DateRange(LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 12)).title(NOW, ZONE));
+		assertEquals("3 Mar to 9 Mar 2025", new LootGroups.DateRange(LocalDate.of(2025, 3, 3), LocalDate.of(2025, 3, 9)).title(NOW, ZONE));
+		assertEquals("28 Dec 2025 to 4 Jan 2026", new LootGroups.DateRange(LocalDate.of(2025, 12, 28), LocalDate.of(2026, 1, 4)).title(NOW, ZONE));
+	}
+
+	@Test
+	public void savedRangeFallsBackToTheLastWeek()
+	{
+		LootGroups.DateRange saved = LootGroups.DateRange.parse("2026-09-01", "2026-09-30", NOW, ZONE);
+		assertEquals(LocalDate.of(2026, 9, 1), saved.getFrom());
+		assertEquals(LocalDate.of(2026, 9, 30), saved.getTo());
+
+		for (String broken : new String[]{"", "yesterday", null})
+		{
+			LootGroups.DateRange fallback = LootGroups.DateRange.parse(broken, "2026-09-30", NOW, ZONE);
+			assertEquals(LocalDate.of(2026, 10, 16), fallback.getFrom());
+			assertEquals(LocalDate.of(2026, 10, 22), fallback.getTo());
+		}
+		assertEquals(LootGroups.Interval.CUSTOM, LootGroups.Interval.fromName("CUSTOM"));
+	}
+
+	@Test(expected = IllegalArgumentException.class)
+	public void customRangeNeedsItsDays()
+	{
+		LootGroups.group(Collections.emptyList(), LootGroups.Mode.TIME, LootGroups.Interval.CUSTOM, NO_TRIPS, ZONE);
 	}
 }

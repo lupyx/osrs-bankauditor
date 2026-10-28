@@ -8,6 +8,7 @@ import io.lupix.runelite.bankauditor.util.Formats;
 import java.awt.BorderLayout;
 import java.awt.AlphaComposite;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -17,10 +18,13 @@ import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,11 +38,13 @@ import javax.swing.Box;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
-import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JSpinner;
+import javax.swing.JTextField;
+import javax.swing.SpinnerDateModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -52,6 +58,7 @@ import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.components.FlatTextField;
 import net.runelite.client.ui.components.IconTextField;
 import net.runelite.client.ui.components.materialtabs.MaterialTab;
 import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
@@ -61,11 +68,16 @@ import net.runelite.client.util.ImageUtil;
 /**
  * Side panel with two tabs: recent loot (what, when, from what and where) and the sell list.
  * The loot tab can show each drop on its own or combine them by source, time range, trip or slayer task.
+ * While logged in, each box can be deleted from the bin in its footer, and all loot from the button at the top.
  * All methods must be called on the Swing event thread.
  */
 public class BankAuditorPanel extends PluginPanel
 {
 	private static final int ROW_GAP = 6;
+	/**
+	 * Space between the search and the views, so the search doesn't read as one of the view options.
+	 */
+	private static final int SECTION_GAP = 14;
 	/**
 	 * Rows shown in the sell list. The summary above it still counts everything, and the bank tag shows it all.
 	 */
@@ -97,7 +109,18 @@ public class BankAuditorPanel extends PluginPanel
 	private static final int ITEM_ICON_WIDTH = 36;
 	private static final int ITEM_ICON_HEIGHT = 32;
 	private static final Color ROW_ALT_COLOR = new Color(35, 35, 35);
-	private static final ImageIcon BIN_ICON = new ImageIcon(ImageUtil.loadImageResource(BankAuditorPanel.class, "/io/lupix/runelite/bankauditor/bin.png"));
+	private static final BufferedImage BIN_IMAGE = ImageUtil.loadImageResource(BankAuditorPanel.class, "/io/lupix/runelite/bankauditor/bin.png");
+	private static final ImageIcon BIN_ICON = new ImageIcon(BIN_IMAGE);
+	private static final ImageIcon BIN_OFF_ICON = new ImageIcon(ImageUtil.alphaOffset(ImageUtil.grayscaleImage(BIN_IMAGE), 0.6f));
+	private static final Color DANGER_COLOR = new Color(120, 30, 30);
+	private static final Color DANGER_HOVER_COLOR = new Color(160, 40, 40);
+	private static final Color DANGER_BORDER_COLOR = new Color(185, 60, 60);
+	/**
+	 * The header of a box while it asks whether to delete it, so it's clear which one goes.
+	 */
+	private static final Color DELETING_HEADER_COLOR = new Color(105, 32, 32);
+	private static final String DATE_PATTERN = "d MMM yyyy";
+	private static final int RANGE_LABEL_WIDTH = 28;
 
 	private final ItemManager itemManager;
 	private final SpriteManager spriteManager;
@@ -111,11 +134,23 @@ public class BankAuditorPanel extends PluginPanel
 	 */
 	private final Set<String> expanded = new HashSet<>();
 	private final Runnable onClearLoot;
+	private final Consumer<List<LootRecord>> onDeleteLoot;
+	private JPanel clearRow;
+	private JLabel clearButton;
+	/**
+	 * Deleting is only offered while logged in, since the loot belongs to the account that is logged in.
+	 */
+	private boolean loggedIn;
 	private final Consumer<LootGroups.Mode> onModeChange;
 	private final Consumer<LootGroups.Interval> onIntervalChange;
 	private LootGroups.Mode mode;
 	private LootGroups.Interval interval;
 	private JPanel intervalRow;
+	private final Consumer<LootGroups.DateRange> onRangeChange;
+	private LootGroups.DateRange range;
+	private JPanel rangeRow;
+	private JSpinner fromSpinner;
+	private JSpinner toSpinner;
 	private final Runnable onEndTrip;
 	private JPanel tripRow;
 	private JLabel endTripButton;
@@ -148,22 +183,29 @@ public class BankAuditorPanel extends PluginPanel
 	private List<String> shownSellRows = Collections.emptyList();
 
 	/**
-	 * @param mode         the loot view to start on
-	 * @param onModeChange told when the user picks another loot view, so it can be remembered
-	 * @param onEndTrip    ends the loot trip that is going
+	 * @param onDeleteLoot  deletes the given drops from the history
+	 * @param mode          the loot view to start on
+	 * @param onModeChange  told when the user picks another loot view, so it can be remembered
+	 * @param range         the days to show with {@link LootGroups.Interval#CUSTOM}
+	 * @param onRangeChange told when the user picks other days, so they can be remembered
+	 * @param onEndTrip     ends the loot trip that is going
 	 */
 	public BankAuditorPanel(ItemManager itemManager, SpriteManager spriteManager, SourceIcons icons, Runnable onClearLoot,
-		LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange,
-		LootGroups.Interval interval, Consumer<LootGroups.Interval> onIntervalChange, Runnable onEndTrip)
+		Consumer<List<LootRecord>> onDeleteLoot, LootGroups.Mode mode, Consumer<LootGroups.Mode> onModeChange,
+		LootGroups.Interval interval, Consumer<LootGroups.Interval> onIntervalChange,
+		LootGroups.DateRange range, Consumer<LootGroups.DateRange> onRangeChange, Runnable onEndTrip)
 	{
 		this.itemManager = itemManager;
 		this.spriteManager = spriteManager;
 		this.icons = icons;
 		this.onClearLoot = onClearLoot;
+		this.onDeleteLoot = onDeleteLoot;
 		this.mode = mode;
 		this.onModeChange = onModeChange;
 		this.interval = interval;
 		this.onIntervalChange = onIntervalChange;
+		this.range = range;
+		this.onRangeChange = onRangeChange;
 		this.onEndTrip = onEndTrip;
 
 		setLayout(new BorderLayout());
@@ -231,13 +273,17 @@ public class BankAuditorPanel extends PluginPanel
 		JPanel top = new JPanel();
 		top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 		top.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		clearRow = buildClearRow();
+		top.add(clearRow);
 		top.add(buildSearchBar());
 		top.add(Box.createVerticalStrut(4));
 		top.add(buildFilterRow());
-		top.add(Box.createVerticalStrut(ROW_GAP));
+		top.add(Box.createVerticalStrut(SECTION_GAP));
 		top.add(summaryRow);
 		intervalRow = buildIntervalRow();
 		top.add(intervalRow);
+		rangeRow = buildRangeRow();
+		top.add(rangeRow);
 		tripRow = buildTripRow();
 		top.add(tripRow);
 		view.add(top, BorderLayout.NORTH);
@@ -245,24 +291,76 @@ public class BankAuditorPanel extends PluginPanel
 		lootList.setLayout(new BoxLayout(lootList, BoxLayout.Y_AXIS));
 		lootList.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		view.add(lootList, BorderLayout.CENTER);
+		return view;
+	}
 
-		JButton clear = new JButton("Clear loot data", BIN_ICON);
-		clear.setIconTextGap(6);
-		clear.setToolTipText("Forget all loot history and stop counting current stacks as loot");
-		clear.addActionListener(e ->
+	/**
+	 * The red Clear loot data button. It sits at the top so it can be reached without scrolling past every
+	 * drop, and only shows while logged in with loot to clear.
+	 */
+	private JPanel buildClearRow()
+	{
+		JPanel row = new JPanel(new BorderLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(0, 0, ROW_GAP, 0));
+		clearButton = smallLabel("Clear loot data", Color.WHITE);
+		clearButton.setIcon(BIN_ICON);
+		clearButton.setIconTextGap(5);
+		clearButton.setHorizontalAlignment(SwingConstants.CENTER);
+		clearButton.setOpaque(true);
+		clearButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		clearButton.setToolTipText("Forget all loot history and stop counting current stacks as loot");
+		clearButton.addMouseListener(new MouseAdapter()
 		{
-			// Cancel is the default, so pressing Enter or Space by accident keeps the data
-			Object[] options = {"Clear", "Cancel"};
-			int answer = JOptionPane.showOptionDialog(this,
-				"This forgets your loot history and stops counting any current stacks as loot. It can't be undone.",
-				"Clear loot data", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
-			if (answer == 0)
+			@Override
+			public void mouseReleased(MouseEvent e)
 			{
-				onClearLoot.run();
+				// Like a normal button: it only goes off when the press and release are both on it
+				if (SwingUtilities.isLeftMouseButton(e) && clearButton.contains(e.getPoint()))
+				{
+					styleClearButton(false);
+					confirmClear();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				styleClearButton(true);
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				styleClearButton(false);
 			}
 		});
-		view.add(clear, BorderLayout.SOUTH);
-		return view;
+		styleClearButton(false);
+		row.add(clearButton, BorderLayout.CENTER);
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+		row.setVisible(false);
+		return row;
+	}
+
+	private void styleClearButton(boolean hovered)
+	{
+		clearButton.setBackground(hovered ? DANGER_HOVER_COLOR : DANGER_COLOR);
+		clearButton.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(DANGER_BORDER_COLOR),
+			new EmptyBorder(3, 5, 3, 5)));
+	}
+
+	private void confirmClear()
+	{
+		// Cancel is the default, so pressing Enter or Space by accident keeps the data
+		Object[] options = {"Clear", "Cancel"};
+		int answer = JOptionPane.showOptionDialog(this,
+			"This forgets your loot history and stops counting any current stacks as loot. It can't be undone.",
+			"Clear loot data", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
+		if (answer == 0)
+		{
+			onClearLoot.run();
+		}
 	}
 
 	private IconTextField buildSearchBar()
@@ -272,7 +370,13 @@ public class BankAuditorPanel extends PluginPanel
 		searchBar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
 		searchBar.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		searchBar.setHoverBackgroundColor(ColorScheme.DARK_GRAY_HOVER_COLOR);
-		searchBar.setToolTipText("Search loot by source, location or item name");
+		JTextField field = searchField();
+		if (field != null)
+		{
+			// The small font fits the hint with all three filters on, and matches the text around it
+			field.setFont(FontManager.getRunescapeSmallFont());
+		}
+		updateSearchHint();
 		// Wait for a short pause in typing, since every render rebuilds the whole list
 		searchTimer.setRepeats(false);
 		searchBar.getDocument().addDocumentListener(new DocumentListener()
@@ -297,6 +401,37 @@ public class BankAuditorPanel extends PluginPanel
 		});
 		searchBar.addClearListener(this::renderLoot);
 		return searchBar;
+	}
+
+	/**
+	 * The text field inside the search bar, which the search bar doesn't hand out itself.
+	 */
+	private JTextField searchField()
+	{
+		for (Component child : searchBar.getComponents())
+		{
+			if (child instanceof FlatTextField)
+			{
+				return ((FlatTextField) child).getTextField();
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Shows what the search looks at in the empty search bar, like "Search sources, items".
+	 */
+	private void updateSearchHint()
+	{
+		String hint = "Search " + searchedNames();
+		searchBar.setToolTipText(hint);
+		JTextField field = searchField();
+		if (field != null)
+		{
+			field.putClientProperty("JTextField.placeholderText", hint);
+			field.setToolTipText(hint);
+			field.repaint();
+		}
 	}
 
 	/**
@@ -337,6 +472,7 @@ public class BankAuditorPanel extends PluginPanel
 				return;
 			}
 			set.accept(on);
+			updateSearchHint();
 			if (!searchBar.getText().trim().isEmpty())
 			{
 				renderLoot();
@@ -345,22 +481,25 @@ public class BankAuditorPanel extends PluginPanel
 		return box;
 	}
 
-	private String filterNames()
+	/**
+	 * What the search looks at, like "sources, items".
+	 */
+	private String searchedNames()
 	{
 		List<String> names = new ArrayList<>();
 		if (matchSource)
 		{
-			names.add("source");
+			names.add("sources");
 		}
 		if (matchLocation)
 		{
-			names.add("location");
+			names.add("locations");
 		}
 		if (matchItem)
 		{
-			names.add("item");
+			names.add("items");
 		}
-		return String.join(", ", names) + (names.size() == 1 ? " name" : " names");
+		return String.join(", ", names);
 	}
 
 	/**
@@ -388,6 +527,7 @@ public class BankAuditorPanel extends PluginPanel
 						styleModeButtons();
 						onModeChange.accept(m);
 						intervalRow.setVisible(m == LootGroups.Mode.TIME);
+						rangeRow.setVisible(customRange());
 						tripRow.setVisible(m == LootGroups.Mode.TRIP);
 						renderLoot();
 					}
@@ -418,11 +558,14 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * Chips for how much time each box covers, only shown in the time range view.
+	 * Chips for how much time each box covers, only shown in the time range view: the presets on one line
+	 * and Custom range, which picks the days, under them.
 	 */
 	private JPanel buildIntervalRow()
 	{
-		JPanel row = new JPanel(new GridLayout(1, LootGroups.Interval.values().length, 3, 0));
+		JPanel presets = new JPanel(new GridLayout(1, 0, 3, 0));
+		presets.setOpaque(false);
+		JPanel row = new JPanel(new BorderLayout(0, 3));
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
 		for (LootGroups.Interval i : LootGroups.Interval.values())
@@ -431,7 +574,8 @@ public class BankAuditorPanel extends PluginPanel
 			chip.setHorizontalAlignment(SwingConstants.CENTER);
 			chip.setOpaque(true);
 			chip.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			chip.setToolTipText("One box per " + i.getLabel().toLowerCase(Locale.ENGLISH));
+			chip.setToolTipText(i == LootGroups.Interval.CUSTOM ? "One box for the days you pick"
+				: "One box per " + i.getLabel().toLowerCase(Locale.ENGLISH));
 			chip.addMouseListener(new MouseAdapter()
 			{
 				@Override
@@ -442,17 +586,92 @@ public class BankAuditorPanel extends PluginPanel
 						interval = i;
 						styleIntervalChips();
 						onIntervalChange.accept(i);
+						rangeRow.setVisible(customRange());
 						renderLoot();
 					}
 				}
 			});
 			intervalChips.put(i, chip);
-			row.add(chip);
+			if (i == LootGroups.Interval.CUSTOM)
+			{
+				row.add(chip, BorderLayout.CENTER);
+			}
+			else
+			{
+				presets.add(chip);
+			}
 		}
+		row.add(presets, BorderLayout.NORTH);
 		styleIntervalChips();
 		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		row.setVisible(mode == LootGroups.Mode.TIME);
 		return row;
+	}
+
+	/**
+	 * The first and last day of a custom range, only shown with Custom range picked. The arrows change the
+	 * part of the date the cursor is in, the day if it is in none, and a typed date counts on Enter.
+	 */
+	private JPanel buildRangeRow()
+	{
+		fromSpinner = dateSpinner(range.getFrom());
+		toSpinner = dateSpinner(range.getTo());
+		JPanel row = new JPanel(new GridLayout(2, 1, 0, 3));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
+		row.add(dateLine("From", fromSpinner));
+		row.add(dateLine("To", toSpinner));
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+		row.setVisible(customRange());
+		return row;
+	}
+
+	private static JPanel dateLine(String name, JSpinner spinner)
+	{
+		JPanel line = new JPanel(new BorderLayout(6, 0));
+		line.setOpaque(false);
+		JLabel label = smallLabel(name, ColorScheme.LIGHT_GRAY_COLOR);
+		label.setPreferredSize(new Dimension(RANGE_LABEL_WIDTH, 0));
+		line.add(label, BorderLayout.WEST);
+		line.add(spinner, BorderLayout.CENTER);
+		return line;
+	}
+
+	private JSpinner dateSpinner(LocalDate date)
+	{
+		Date start = Date.from(date.atStartOfDay(ZoneId.systemDefault()).toInstant());
+		JSpinner spinner = new JSpinner(new SpinnerDateModel(start, null, null, Calendar.DAY_OF_MONTH));
+		// English month names, like the box titles
+		spinner.setLocale(Locale.ENGLISH);
+		JSpinner.DateEditor editor = new JSpinner.DateEditor(spinner, DATE_PATTERN);
+		spinner.setEditor(editor);
+		spinner.setFont(FontManager.getRunescapeSmallFont());
+		editor.getTextField().setFont(FontManager.getRunescapeSmallFont());
+		editor.getTextField().setHorizontalAlignment(JTextField.LEFT);
+		spinner.addChangeListener(e -> rangePicked());
+		return spinner;
+	}
+
+	private static LocalDate dateOf(JSpinner spinner)
+	{
+		return ((Date) spinner.getValue()).toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+	}
+
+	private void rangePicked()
+	{
+		LootGroups.DateRange picked = new LootGroups.DateRange(dateOf(fromSpinner), dateOf(toSpinner));
+		if (picked.getFrom().equals(range.getFrom()) && picked.getTo().equals(range.getTo()))
+		{
+			return;
+		}
+		range = picked;
+		onRangeChange.accept(picked);
+		renderLoot();
+	}
+
+	private boolean customRange()
+	{
+		return mode == LootGroups.Mode.TIME && interval == LootGroups.Interval.CUSTOM;
 	}
 
 	/**
@@ -528,7 +747,7 @@ public class BankAuditorPanel extends PluginPanel
 			chip.setForeground(on ? Color.WHITE : ColorScheme.LIGHT_GRAY_COLOR);
 			chip.setBorder(BorderFactory.createCompoundBorder(
 				BorderFactory.createLineBorder(on ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_HOVER_COLOR),
-				new EmptyBorder(1, 5, 1, 5)));
+				new EmptyBorder(1, 1, 1, 1)));
 		}
 	}
 
@@ -578,9 +797,10 @@ public class BankAuditorPanel extends PluginPanel
 	 * @param itemValues    alch price and tradeability of every item in the records
 	 * @param bestValueOnly show only the higher of the GE and HA value on each item line
 	 * @param trips         where loot trips ended
+	 * @param loggedIn      offers deleting loot, which only makes sense for the account that is logged in
 	 */
 	public void showLoot(List<LootRecord> records, long now, ValueTiers tiers, Map<Integer, ItemValue> itemValues,
-		boolean bestValueOnly, TripLog trips)
+		boolean bestValueOnly, TripLog trips, boolean loggedIn)
 	{
 		lootRecords = records;
 		lootNow = now;
@@ -588,6 +808,8 @@ public class BankAuditorPanel extends PluginPanel
 		this.itemValues = itemValues;
 		this.bestValueOnly = bestValueOnly;
 		this.trips = trips;
+		this.loggedIn = loggedIn;
+		clearRow.setVisible(loggedIn && !records.isEmpty());
 		styleEndTripButton();
 		renderLoot();
 	}
@@ -606,7 +828,7 @@ public class BankAuditorPanel extends PluginPanel
 		}
 		else if (records.isEmpty())
 		{
-			setSummary("No matches", "Nothing matches \"" + query + "\" in the " + filterNames());
+			setSummary("No matches", "Nothing matches \"" + query + "\" in " + searchedNames());
 		}
 		else if (mode == LootGroups.Mode.DEFAULT)
 		{
@@ -629,10 +851,11 @@ public class BankAuditorPanel extends PluginPanel
 		else
 		{
 			ZoneId zone = ZoneId.systemDefault();
-			List<LootGroups.Group> groups = LootGroups.group(records, mode, interval, trips, zone);
-			if (mode == LootGroups.Mode.TASK)
+			boolean custom = customRange();
+			List<LootGroups.Group> groups = LootGroups.group(records, mode, interval, range, trips, zone);
+			if (mode == LootGroups.Mode.TASK || custom)
 			{
-				// The task view leaves out drops that weren't for a task, so only count the ones it shows
+				// These leave out drops that weren't for a task or fall outside the days, so only count the ones shown
 				totalCount = 0;
 				for (LootGroups.Group group : groups)
 				{
@@ -643,7 +866,19 @@ public class BankAuditorPanel extends PluginPanel
 				: mode == LootGroups.Mode.TASK ? "task" : interval.getLabel().toLowerCase(Locale.ENGLISH);
 			String count = Formats.commas(groups.size()) + " " + noun + (groups.size() == 1 ? "" : "s");
 			String drops = Formats.commas(totalCount) + matching + (totalCount == 1 ? " drop" : " drops");
-			if (groups.isEmpty())
+			if (custom)
+			{
+				String days = range.title(lootNow, zone);
+				if (groups.isEmpty())
+				{
+					setSummary("No drops" + matching, "No drops" + matching + " from " + days);
+				}
+				else
+				{
+					setSummary(drops, drops + " from " + days);
+				}
+			}
+			else if (groups.isEmpty())
 			{
 				setSummary("No slayer task drops" + (query.isEmpty() ? " yet" : matching),
 					"Drops from kills that count for your slayer task show up here, one box per task");
@@ -658,7 +893,8 @@ public class BankAuditorPanel extends PluginPanel
 			}
 			for (LootGroups.Group group : groups.subList(0, Math.min(MAX_GROUPS, groups.size())))
 			{
-				String title = mode == LootGroups.Mode.TIME ? LootGroups.periodTitle(group.getTitle(), interval, lootNow, zone)
+				String title = custom ? range.title(lootNow, zone)
+					: mode == LootGroups.Mode.TIME ? LootGroups.periodTitle(group.getTitle(), interval, lootNow, zone)
 					: mode == LootGroups.Mode.TRIP ? LootGroups.tripTitle(group, lootNow, zone)
 					: mode == LootGroups.Mode.TASK ? group.getTaskName() : group.getTitle();
 				lootList.add(groupBox(group, title));
@@ -748,7 +984,7 @@ public class BankAuditorPanel extends PluginPanel
 		// The title is also where an area named after the boss shows, like Vorkath at Vorkath
 		String key = "drop:" + record.getTimestamp() + ":" + record.getSource();
 		return dropBox(key, record.describeSource(), matchSource || matchLocation, icons.spriteFor(record.getSource(), record.getType()),
-			Formats.ago(now, record.getTimestamp()), where, lines);
+			Formats.ago(now, record.getTimestamp()), where, lines, Collections.singletonList(record));
 	}
 
 	private JPanel groupBox(LootGroups.Group group, String title)
@@ -763,17 +999,18 @@ public class BankAuditorPanel extends PluginPanel
 		boolean titleSearched = mode == LootGroups.Mode.SOURCE && matchSource;
 		int sprite = mode == LootGroups.Mode.TASK ? icons.taskSprite(group.getTaskName())
 			: icons.spriteFor(group.getTopSource(), group.getTopSourceType());
-		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, sprite, when, detail, group.getLines());
+		return dropBox(mode + ":" + group.getTitle(), title, titleSearched, sprite, when, detail, group.getLines(), group.getRecords());
 	}
 
 	/**
 	 * A box with a header (source icon, title, time, the line under it and the item count) over a table of
 	 * items with their icons and values, and a footer with the GE and HA totals.
 	 *
-	 * @param key stays the same across refreshes, to remember whether the box was expanded
+	 * @param key     stays the same across refreshes, to remember whether the box was expanded
+	 * @param records the drops in the box, which its bin deletes
 	 */
 	private JPanel dropBox(String key, String title, boolean titleSearched, int sprite, String when, JLabel subtitle,
-		List<LootGroups.Line> lines)
+		List<LootGroups.Line> lines, List<LootRecord> records)
 	{
 		long geTotal = 0;
 		long haTotal = 0;
@@ -865,26 +1102,111 @@ public class BankAuditorPanel extends PluginPanel
 				: "Show " + more + (more == 1 ? " more item" : " more items")));
 		}
 		box.add(items, BorderLayout.CENTER);
-		box.add(totalsRow(geTotal, haTotal), BorderLayout.SOUTH);
+		JLabel delete = loggedIn ? deleteButton(header, title, records, geTotal) : null;
+		box.add(totalsRow(geTotal, haTotal, delete), BorderLayout.SOUTH);
 		return box;
+	}
+
+	/**
+	 * The small bin in a box's footer. It stays dim until the mouse is on it, only goes off on a full click
+	 * (press and release both on it) and always asks first.
+	 */
+	private JLabel deleteButton(JPanel header, String title, List<LootRecord> records, long geTotal)
+	{
+		JLabel bin = new JLabel(BIN_OFF_ICON);
+		bin.setBorder(new EmptyBorder(1, 1, 1, 1));
+		bin.setBackground(DANGER_COLOR);
+		bin.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		bin.setToolTipText(records.size() == 1 ? "Delete this drop" : "Delete these " + Formats.commas(records.size()) + " drops");
+		bin.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mouseReleased(MouseEvent e)
+			{
+				if (SwingUtilities.isLeftMouseButton(e) && bin.contains(e.getPoint()))
+				{
+					styleBin(bin, false);
+					confirmDelete(header, title, records, geTotal);
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				styleBin(bin, true);
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				styleBin(bin, false);
+			}
+		});
+		return bin;
+	}
+
+	private static void styleBin(JLabel bin, boolean hovered)
+	{
+		bin.setIcon(hovered ? BIN_ICON : BIN_OFF_ICON);
+		bin.setOpaque(hovered);
+		bin.repaint();
+	}
+
+	/**
+	 * Asks before deleting, with the box's header turned red meanwhile so it's clear which box goes.
+	 */
+	private void confirmDelete(JPanel header, String title, List<LootRecord> records, long geTotal)
+	{
+		Color headerColor = header.getBackground();
+		header.setBackground(DELETING_HEADER_COLOR);
+		String worth = Formats.compact(geTotal) + " gp";
+		String message = records.size() == 1
+			? "Delete this drop from " + title + ", worth " + worth + "?"
+			: "Delete the " + Formats.commas(records.size()) + " drops in \"" + title + "\", worth " + worth + "?";
+		if (records.size() > 1 && !query.isEmpty())
+		{
+			message += "\nOnly the drops that match your search go.";
+		}
+		message += "\nThis can't be undone.";
+		// Cancel is the default, so pressing Enter or Space by accident keeps the drop
+		Object[] options = {"Delete", "Cancel"};
+		int answer = JOptionPane.showOptionDialog(this, message, records.size() == 1 ? "Delete drop" : "Delete drops",
+			JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
+		header.setBackground(headerColor);
+		if (answer == 0)
+		{
+			onDeleteLoot.accept(new ArrayList<>(records));
+		}
 	}
 
 	/**
 	 * The footer: the GE and HA totals side by side in the middle, in a bigger font than the item values.
 	 * It shares the header's color and sits outside the value edge, so the box reads as framed.
+	 *
+	 * @param delete the bin at its right end, or null for none
 	 */
-	private JPanel totalsRow(long geTotal, long haTotal)
+	private JPanel totalsRow(long geTotal, long haTotal, JLabel delete)
 	{
-		JPanel row = new JPanel(new BorderLayout(6, 0));
+		JPanel row = new JPanel(new BorderLayout());
 		row.setBackground(HEADER_COLOR);
 		row.setBorder(BorderFactory.createCompoundBorder(
 			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.BORDER_COLOR),
 			new EmptyBorder(6, 6, 6, 6)));
-		JPanel values = new JPanel(new FlowLayout(FlowLayout.CENTER, TOTAL_GAP, 0));
+		// The gap only goes between the two, so a narrow footer never wraps the second one out of sight
+		JPanel values = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
 		values.setOpaque(false);
 		values.add(totalLabel(GE_TOTAL_ICON, geTotal, ColorScheme.GRAND_EXCHANGE_PRICE, "GE total"));
+		values.add(Box.createHorizontalStrut(TOTAL_GAP));
 		values.add(totalLabel(HA_TOTAL_ICON, haTotal, ColorScheme.GRAND_EXCHANGE_ALCH, "HA total"));
 		row.add(values, BorderLayout.CENTER);
+		if (delete != null)
+		{
+			// Space as wide as the bin on the other side keeps the totals in the middle
+			JLabel balance = new JLabel();
+			balance.setPreferredSize(delete.getPreferredSize());
+			row.add(balance, BorderLayout.WEST);
+			row.add(delete, BorderLayout.EAST);
+		}
 		return row;
 	}
 
