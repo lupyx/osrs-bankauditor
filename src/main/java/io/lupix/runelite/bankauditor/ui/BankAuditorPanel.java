@@ -273,11 +273,11 @@ public class BankAuditorPanel extends PluginPanel
 		JPanel top = new JPanel();
 		top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 		top.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		clearRow = buildClearRow();
-		top.add(clearRow);
 		top.add(buildSearchBar());
 		top.add(Box.createVerticalStrut(4));
 		top.add(buildFilterRow());
+		clearRow = buildClearRow();
+		top.add(clearRow);
 		top.add(Box.createVerticalStrut(SECTION_GAP));
 		top.add(summaryRow);
 		intervalRow = buildIntervalRow();
@@ -295,14 +295,14 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * The red Clear loot data button. It sits at the top so it can be reached without scrolling past every
-	 * drop, and only shows while logged in with loot to clear.
+	 * The red Clear loot data button. It sits under the search, so it can be reached without scrolling past
+	 * every drop, and only shows while logged in with loot to clear.
 	 */
 	private JPanel buildClearRow()
 	{
 		JPanel row = new JPanel(new BorderLayout());
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.setBorder(new EmptyBorder(0, 0, ROW_GAP, 0));
+		row.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
 		clearButton = smallLabel("Clear loot data", Color.WHITE);
 		clearButton.setIcon(BIN_ICON);
 		clearButton.setIconTextGap(5);
