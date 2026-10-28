@@ -136,6 +136,7 @@ public class BankAuditorPanel extends PluginPanel
 	private final Runnable onClearLoot;
 	private final Consumer<List<LootRecord>> onDeleteLoot;
 	private JPanel clearRow;
+	private boolean lootTabShowing = true;
 	private JLabel clearButton;
 	/**
 	 * Deleting is only offered while logged in, since the loot belongs to the account that is logged in.
@@ -221,8 +222,13 @@ public class BankAuditorPanel extends PluginPanel
 
 		MaterialTab lootTab = new MaterialTab("Loot", tabs, buildLootView());
 		MaterialTab sellTab = new MaterialTab("Sell", tabs, buildSellView());
+		lootTab.setOnSelectEvent(() -> showingLootTab(true));
+		sellTab.setOnSelectEvent(() -> showingLootTab(false));
 		tabs.addTab(lootTab);
 		tabs.addTab(sellTab);
+		clearRow = buildClearRow();
+		// Below the scrolling part of the sidebar, so it never needs scrolling to and never sits among the drops
+		getWrappedPanel().add(clearRow, BorderLayout.SOUTH);
 		tabs.select(lootTab);
 
 		add(tabs, BorderLayout.NORTH);
@@ -276,8 +282,6 @@ public class BankAuditorPanel extends PluginPanel
 		top.add(buildSearchBar());
 		top.add(Box.createVerticalStrut(4));
 		top.add(buildFilterRow());
-		clearRow = buildClearRow();
-		top.add(clearRow);
 		top.add(Box.createVerticalStrut(SECTION_GAP));
 		top.add(summaryRow);
 		intervalRow = buildIntervalRow();
@@ -295,14 +299,16 @@ public class BankAuditorPanel extends PluginPanel
 	}
 
 	/**
-	 * The red Clear loot data button. It sits under the search, so it can be reached without scrolling past
-	 * every drop, and only shows while logged in with loot to clear.
+	 * The red Clear loot data button, pinned to the bottom of the sidebar under the loot tab. It only shows
+	 * while logged in with loot to clear.
 	 */
 	private JPanel buildClearRow()
 	{
 		JPanel row = new JPanel(new BorderLayout());
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
+		row.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.DARKER_GRAY_COLOR),
+			new EmptyBorder(8, 10, 8, 10)));
 		clearButton = smallLabel("Clear loot data", Color.WHITE);
 		clearButton.setIcon(BIN_ICON);
 		clearButton.setIconTextGap(5);
@@ -340,6 +346,21 @@ public class BankAuditorPanel extends PluginPanel
 		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		row.setVisible(false);
 		return row;
+	}
+
+	private boolean showingLootTab(boolean loot)
+	{
+		lootTabShowing = loot;
+		updateClearRow();
+		return true;
+	}
+
+	private void updateClearRow()
+	{
+		if (clearRow != null)
+		{
+			clearRow.setVisible(lootTabShowing && loggedIn && !lootRecords.isEmpty());
+		}
 	}
 
 	private void styleClearButton(boolean hovered)
@@ -809,7 +830,7 @@ public class BankAuditorPanel extends PluginPanel
 		this.bestValueOnly = bestValueOnly;
 		this.trips = trips;
 		this.loggedIn = loggedIn;
-		clearRow.setVisible(loggedIn && !records.isEmpty());
+		updateClearRow();
 		styleEndTripButton();
 		renderLoot();
 	}
