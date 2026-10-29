@@ -3,6 +3,8 @@ package io.lupix.runelite.bankauditor;
 import com.google.gson.Gson;
 import com.google.inject.Provides;
 import io.lupix.runelite.bankauditor.loot.ChestLoot;
+import io.lupix.runelite.bankauditor.loot.Destination;
+import io.lupix.runelite.bankauditor.loot.DestinationTracker;
 import io.lupix.runelite.bankauditor.loot.GroundLootTracker;
 import io.lupix.runelite.bankauditor.loot.LootAttribution;
 import io.lupix.runelite.bankauditor.loot.LootHistory;
@@ -38,6 +40,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +56,8 @@ import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.EnumComposition;
+import net.runelite.api.EnumID;
 import net.runelite.api.GameState;
 import net.runelite.api.GrandExchangeOffer;
 import net.runelite.api.GrandExchangeOfferState;
@@ -104,6 +109,7 @@ import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.events.ServerNpcLoot;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemStack;
+import net.runelite.client.game.ItemVariationMapping;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.hiscore.HiscoreSkill;
 import net.runelite.client.hiscore.HiscoreSkillType;
@@ -181,6 +187,13 @@ public class BankAuditorPlugin extends Plugin
 		InterfaceID.Bankside.RUNEPOUCH_BANKALL, InterfaceID.Bankside.RUNEPOUCH_CONTENTS,
 		InterfaceID.Bankmain.DEPOSITCONTAINERS);
 
+	// What an open gem bag takes
+	private static final Set<Integer> BAGGED_GEMS = Set.of(
+		ItemID.UNCUT_SAPPHIRE, ItemID.UNCUT_EMERALD, ItemID.UNCUT_RUBY, ItemID.UNCUT_DIAMOND, ItemID.UNCUT_DRAGONSTONE);
+	private static final int[] RUNE_POUCH_TYPES = {
+		VarbitID.RUNE_POUCH_TYPE_1, VarbitID.RUNE_POUCH_TYPE_2, VarbitID.RUNE_POUCH_TYPE_3,
+		VarbitID.RUNE_POUCH_TYPE_4, VarbitID.RUNE_POUCH_TYPE_5, VarbitID.RUNE_POUCH_TYPE_6};
+
 	// Same message the Loot Tracker uses to spot pickpocketing
 	private static final Pattern PICKPOCKET = Pattern.compile("You pick (the )?(?<target>.+)'s? pocket.*");
 
@@ -247,6 +260,17 @@ public class BankAuditorPlugin extends Plugin
 	private TripLog trips = new TripLog();
 	private final Map<Integer, ItemValue> itemValueCache = new HashMap<>();
 	private final GroundLootTracker groundLoot = new GroundLootTracker();
+	private final DestinationTracker destinations = new DestinationTracker();
+	/**
+	 * Last seen charges of the bonecrusher, ash sanctifier and bracelet of ethereum, by varbit, to tell how
+	 * much they changed.
+	 */
+	private final Map<Integer, Integer> deviceCharges = new HashMap<>();
+	/**
+	 * What the looting bag and seed box held at their last update, when the client has seen them.
+	 */
+	private Map<Integer, Long> lootingBagCounts;
+	private Map<Integer, Long> seedBoxCounts;
 	private final ChestLoot lunarChest = new ChestLoot();
 	private final SlayerTaskTracker slayerTask = new SlayerTaskTracker();
 	private boolean slayerDirty;
@@ -406,6 +430,10 @@ public class BankAuditorPlugin extends Plugin
 	protected void shutDown()
 	{
 		groundLoot.clear();
+		destinations.clear();
+		deviceCharges.clear();
+		lootingBagCounts = null;
+		seedBoxCounts = null;
 		lunarChest.clear();
 		eventBus.unregister(nativeSources);
 		overlayManager.remove(overlay);
@@ -591,9 +619,21 @@ public class BankAuditorPlugin extends Plugin
 		{
 			showPopup(record);
 		}
+		int tick = client.getTickCount();
 		if (groundDrop)
 		{
-			groundLoot.dropRecorded(record, client.getTickCount());
+			groundLoot.dropRecorded(record, tick);
+			moved(destinations.dropRecorded(record, tick, this::eatenBy));
+		}
+		else if (type == LootSourceType.PICKPOCKET)
+		{
+			// Pickpocketed items can skip the inventory too, like seeds into an open seed box
+			List<DestinationTracker.Moved> moved = new ArrayList<>();
+			for (LootItem item : items)
+			{
+				moved.addAll(destinations.pickedUp(record, item.getId(), item.getQuantity(), tick));
+			}
+			moved(moved);
 		}
 		pruneHistory(now);
 
@@ -710,6 +750,7 @@ public class BankAuditorPlugin extends Plugin
 			Map<Integer, Long> before = inventoryCounts;
 			inventoryCounts = count(event.getItemContainer());
 			checkAlch(before, inventoryCounts, tick);
+			gained(null, before, inventoryCounts);
 			onContentsChanged();
 		}
 		else if (id == InventoryID.WORN)
@@ -720,9 +761,50 @@ public class BankAuditorPlugin extends Plugin
 				wornBeforeTick = wornCounts;
 				wornTick = tick;
 			}
+			Map<Integer, Long> before = wornCounts;
 			wornCounts = count(event.getItemContainer());
+			// Picked up ammo goes straight into the ammo slot for players who asked the ranged tutor for that
+			gained(Destination.AMMO_SLOT, before, wornCounts);
 			onContentsChanged();
 		}
+		else if (id == InventoryID.LOOTING_BAG)
+		{
+			Map<Integer, Long> before = lootingBagCounts;
+			lootingBagCounts = count(event.getItemContainer());
+			if (before != null)
+			{
+				gained(Destination.LOOTING_BAG, before, lootingBagCounts);
+			}
+		}
+		else if (id == InventoryID.SEED_BOX)
+		{
+			Map<Integer, Long> before = seedBoxCounts;
+			seedBoxCounts = count(event.getItemContainer());
+			if (before != null)
+			{
+				gained(Destination.SEED_BOX, before, seedBoxCounts);
+			}
+		}
+	}
+
+	/**
+	 * Tells the destination tracker what a container gained, so picked up loot can be traced to it.
+	 *
+	 * @param where null for the inventory
+	 */
+	private void gained(Destination where, Map<Integer, Long> before, Map<Integer, Long> after)
+	{
+		int tick = client.getTickCount();
+		List<DestinationTracker.Moved> moved = new ArrayList<>();
+		for (Map.Entry<Integer, Long> e : after.entrySet())
+		{
+			long gain = e.getValue() - before.getOrDefault(e.getKey(), 0L);
+			if (gain > 0)
+			{
+				moved.addAll(destinations.gained(where, e.getKey(), gain, tick));
+			}
+		}
+		moved(moved);
 	}
 
 	@Subscribe
@@ -747,10 +829,18 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onItemDespawned(ItemDespawned event)
 	{
-		GroundLootTracker.Left left = groundLoot.despawned(event.getItem(), client.getTickCount());
-		if (left != null)
+		GroundLootTracker.Outcome gone = groundLoot.despawned(event.getItem(), client.getTickCount());
+		if (gone == null)
 		{
-			markLeft(left);
+			return;
+		}
+		if (gone.isLeft())
+		{
+			markLeft(gone);
+		}
+		else
+		{
+			moved(destinations.pickedUp(gone.getRecord(), gone.getItemId(), gone.getQuantity(), client.getTickCount()));
 		}
 	}
 
@@ -764,19 +854,146 @@ public class BankAuditorPlugin extends Plugin
 	 * Notes in the history that some loot stayed on the floor. Only the side panel shows this; the loot count
 	 * catches up at the next bank visit like it always does.
 	 */
-	private void markLeft(GroundLootTracker.Left left)
+	private void markLeft(GroundLootTracker.Outcome left)
 	{
 		LootRecord record = left.getRecord();
-		LootRecord updated = record.withLeft(left.getItemId(), left.getQuantity());
+		updateRecord(record, record.withLeft(left.getItemId(), left.getQuantity()));
+	}
+
+	/**
+	 * Notes in the history where loot went when it skipped the inventory. Like loot left on the floor, only
+	 * the side panel shows it.
+	 */
+	private void moved(List<DestinationTracker.Moved> moved)
+	{
+		// One record can be updated more than once here, so later notes go on the copy made by the earlier ones
+		Map<LootRecord, LootRecord> latest = new IdentityHashMap<>();
+		for (DestinationTracker.Moved m : moved)
+		{
+			LootRecord record = latest.getOrDefault(m.getRecord(), m.getRecord());
+			LootRecord updated = record.withMoved(m.getItemId(), m.getQuantity(), m.getDestination());
+			if (updateRecord(record, updated))
+			{
+				latest.put(m.getRecord(), updated);
+			}
+		}
+	}
+
+	/**
+	 * Swaps a record for an updated copy everywhere it is kept.
+	 *
+	 * @return false when nothing changed
+	 */
+	private boolean updateRecord(LootRecord record, LootRecord updated)
+	{
 		if (updated == record)
 		{
-			return;
+			return false;
 		}
 		history.replace(record, updated);
 		groundLoot.replace(record, updated);
+		destinations.replace(record, updated);
 		historyDirty = true;
 		panelDirty = true;
 		clearCaches();
+		return true;
+	}
+
+	/**
+	 * The device that takes this item the moment it drops, or null. Whether it is carried and switched on
+	 * doesn't matter, since only a change in its charges marks anything.
+	 */
+	private Destination eatenBy(int itemId)
+	{
+		if (itemId == ItemID.WILD_CAVE_SHARD)
+		{
+			// Revenant ether
+			return Destination.ETHER_BRACELET;
+		}
+		String[] actions = itemManager.getItemComposition(itemId).getInventoryActions();
+		if (actions != null)
+		{
+			for (String action : actions)
+			{
+				if ("Bury".equals(action))
+				{
+					return Destination.BONECRUSHER;
+				}
+				if ("Scatter".equals(action))
+				{
+					return Destination.ASH_SANCTIFIER;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * For loot that was picked up but never reached the inventory, the open container carried that takes
+	 * that kind of item, or null when there is none.
+	 */
+	private Destination storedIn(int itemId)
+	{
+		ItemComposition item = itemManager.getItemComposition(itemId);
+		String name = item.getMembersName();
+		if (runePouchHolds(itemId))
+		{
+			return Destination.RUNE_POUCH;
+		}
+		if (name.startsWith("Grimy ") && (carrying(ItemID.SLAYER_HERB_SACK_OPEN) || carrying(ItemID.SLAYER_HERB_SACK_SILK_OPEN)))
+		{
+			return Destination.HERB_SACK;
+		}
+		// The seed box takes mushroom spores and coral frags too
+		if ((name.endsWith(" seed") || name.endsWith(" seeds") || name.endsWith(" spore") || name.endsWith(" frag"))
+			&& carrying(ItemID.SEED_BOX_OPEN))
+		{
+			return Destination.SEED_BOX;
+		}
+		if (BAGGED_GEMS.contains(itemId) && carrying(ItemID.GEM_BAG_OPEN))
+		{
+			return Destination.GEM_BAG;
+		}
+		if (item.isTradeable() && carrying(ItemID.LOOTING_BAG_OPEN) && client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1)
+		{
+			return Destination.LOOTING_BAG;
+		}
+		return null;
+	}
+
+	private boolean carrying(int itemId)
+	{
+		return inventoryCounts.containsKey(itemId);
+	}
+
+	/**
+	 * Whether a rune pouch is carried with a stack of this rune in it. Picked up runes only go in then, and
+	 * only with the game setting for it on.
+	 */
+	private boolean runePouchHolds(int itemId)
+	{
+		boolean pouch = false;
+		for (int base : new int[]{ItemID.BH_RUNE_POUCH, ItemID.DIVINE_RUNE_POUCH})
+		{
+			for (int variant : ItemVariationMapping.getVariations(base))
+			{
+				pouch |= carrying(variant);
+			}
+		}
+		if (!pouch)
+		{
+			return false;
+		}
+		EnumComposition runes = client.getEnum(EnumID.RUNEPOUCH_RUNE);
+		for (int varbit : RUNE_POUCH_TYPES)
+		{
+			int type = client.getVarbitValue(varbit);
+			if (type > 0 && runes.getIntValue(type) == itemId)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -853,12 +1070,7 @@ public class BankAuditorPlugin extends Plugin
 		{
 			return;
 		}
-		LootRecord updated = record.withAlched(item, 1, gold);
-		history.replace(record, updated);
-		groundLoot.replace(record, updated);
-		historyDirty = true;
-		panelDirty = true;
-		clearCaches();
+		updateRecord(record, record.withAlched(item, 1, gold));
 	}
 
 	@Subscribe
@@ -1092,12 +1304,43 @@ public class BankAuditorPlugin extends Plugin
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged event)
 	{
+		int varbit = event.getVarbitId();
+		if (varbit == VarbitID.CHARGES_BONECRUSHER_QUANTITY || varbit == VarbitID.CHARGES_ASH_SANCTIFIER_QUANTITY
+			|| varbit == VarbitID.CHARGES_BRACELET_OF_ETHEREUM_QUANTITY)
+		{
+			deviceChargesChanged(varbit, event.getValue());
+		}
 		int varp = event.getVarpId();
 		if (varp == VarPlayerID.SLAYER_COUNT || varp == VarPlayerID.SLAYER_TARGET || varp == VarPlayerID.SLAYER_COUNT_ORIGINAL
 			|| event.getVarbitId() == VarbitID.SLAYER_TARGET_BOSSID)
 		{
 			// Read once the tick is over, when every part of a change has arrived
 			slayerCheck = true;
+		}
+	}
+
+	/**
+	 * Charges that went down on a bonecrusher or ash sanctifier, or up on a bracelet of ethereum, are bones,
+	 * ashes or ether that never reached the floor.
+	 */
+	private void deviceChargesChanged(int varbit, int value)
+	{
+		// A change from 0 doesn't need an earlier event, since 0 is what the client starts with
+		int before = Objects.requireNonNullElse(deviceCharges.put(varbit, value), 0);
+		int tick = client.getTickCount();
+		if (varbit == VarbitID.CHARGES_BONECRUSHER_QUANTITY && value < before)
+		{
+			moved(destinations.chargesUsed(Destination.BONECRUSHER, before - value, tick));
+		}
+		else if (varbit == VarbitID.CHARGES_ASH_SANCTIFIER_QUANTITY && value < before)
+		{
+			moved(destinations.chargesUsed(Destination.ASH_SANCTIFIER, before - value, tick));
+		}
+		else if (varbit == VarbitID.CHARGES_BRACELET_OF_ETHEREUM_QUANTITY && value > before)
+		{
+			// The bracelet also spends a charge on each revenant attack, so the gain can come out short of
+			// what it absorbed. Any gain means it took the ether.
+			moved(destinations.chargesUsed(Destination.ETHER_BRACELET, Long.MAX_VALUE, tick));
 		}
 	}
 
@@ -1147,10 +1390,11 @@ public class BankAuditorPlugin extends Plugin
 	public void onGameTick(GameTick event)
 	{
 		checkBankCloseRace();
-		for (GroundLootTracker.Left left : groundLoot.tick(client.getTickCount()))
+		for (GroundLootTracker.Outcome left : groundLoot.tick(client.getTickCount()))
 		{
 			markLeft(left);
 		}
+		moved(destinations.tick(client.getTickCount(), this::storedIn));
 		tickCounter++;
 		// Tooltips say "5 min ago", and prices change, so rebuild them now and then
 		clearCaches();
@@ -1664,6 +1908,7 @@ public class BankAuditorPlugin extends Plugin
 		history.clear();
 		trips.clear();
 		groundLoot.clear();
+		destinations.clear();
 		ledgerDirty = true;
 		historyDirty = true;
 		tripsDirty = true;
@@ -1790,6 +2035,10 @@ public class BankAuditorPlugin extends Plugin
 			bankTrusted = false;
 			clearCarriedCounts();
 			clearCaches();
+			// The next login starts its vars and containers from scratch
+			deviceCharges.clear();
+			lootingBagCounts = null;
+			seedBoxCounts = null;
 			loggedIn = false;
 			// No ticks run on the login screen, so the delete buttons go now
 			refreshPanel();
@@ -1846,6 +2095,7 @@ public class BankAuditorPlugin extends Plugin
 			return;
 		}
 		groundLoot.clear();
+		destinations.clear();
 		lunarChest.clear();
 		saveState(false);
 

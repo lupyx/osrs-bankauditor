@@ -34,6 +34,16 @@ public final class LootItem
 	 */
 	@SerializedName("h")
 	private final long alchPrice;
+	/**
+	 * How many went to {@link #destination} by themselves instead of the inventory.
+	 */
+	@SerializedName("m")
+	private final long moved;
+	/**
+	 * Null when nothing was moved, and also for a destination saved by a newer version that this one doesn't know.
+	 */
+	@SerializedName("w")
+	private final Destination destination;
 
 	public LootItem(int id, String name, long quantity, long price)
 	{
@@ -47,6 +57,12 @@ public final class LootItem
 
 	public LootItem(int id, String name, long quantity, long price, long left, long alched, long alchPrice)
 	{
+		this(id, name, quantity, price, left, alched, alchPrice, 0, null);
+	}
+
+	public LootItem(int id, String name, long quantity, long price, long left, long alched, long alchPrice, long moved,
+		Destination destination)
+	{
 		this.id = id;
 		this.name = name;
 		this.quantity = quantity;
@@ -54,6 +70,8 @@ public final class LootItem
 		this.left = Math.max(0, Math.min(quantity, left));
 		this.alched = Math.max(0, Math.min(quantity - this.left, alched));
 		this.alchPrice = alchPrice;
+		this.destination = destination;
+		this.moved = destination == null ? 0 : Math.max(0, Math.min(quantity - this.left - this.alched, moved));
 	}
 
 	public int getId()
@@ -103,11 +121,36 @@ public final class LootItem
 	}
 
 	/**
-	 * How many are still items: picked up (or still on the floor) and not alched.
+	 * How many went somewhere other than the inventory by themselves, see {@link #getDestination}.
+	 */
+	public long getMoved()
+	{
+		return destination == null ? 0 : Math.max(0, Math.min(quantity - getLeft() - getAlched(), moved));
+	}
+
+	/**
+	 * Where the moved ones went, or null when none were.
+	 */
+	public Destination getDestination()
+	{
+		return getMoved() > 0 ? destination : null;
+	}
+
+	/**
+	 * How many reached the inventory, or are still on the floor: not left, alched or moved somewhere else.
 	 */
 	public long getKept()
 	{
-		return quantity - getLeft() - getAlched();
+		return quantity - getLeft() - getAlched() - getMoved();
+	}
+
+	/**
+	 * How many the player still has as items, wherever they are. Moved ones count unless they were used up.
+	 */
+	public long getOwned()
+	{
+		Destination where = getDestination();
+		return getKept() + (where == null || where.isUsedUp() ? 0 : getMoved());
 	}
 
 	/**
@@ -115,7 +158,7 @@ public final class LootItem
 	 */
 	public LootItem withMoreLeft(long more)
 	{
-		return new LootItem(id, name, quantity, price, getLeft() + more, getAlched(), alchPrice);
+		return new LootItem(id, name, quantity, price, getLeft() + more, getAlched(), alchPrice, getMoved(), destination);
 	}
 
 	/**
@@ -123,7 +166,17 @@ public final class LootItem
 	 */
 	public LootItem withMoreAlched(long more, long gold)
 	{
-		return new LootItem(id, name, quantity, price, getLeft(), getAlched() + more, gold);
+		return new LootItem(id, name, quantity, price, getLeft(), getAlched() + more, gold, getMoved(), destination);
+	}
+
+	/**
+	 * A copy with {@code more} added to the amount that went to {@code where}. An item only keeps one
+	 * destination, so this replaces any other.
+	 */
+	public LootItem withMoreMoved(long more, Destination where)
+	{
+		long already = where == getDestination() ? getMoved() : 0;
+		return new LootItem(id, name, quantity, price, getLeft(), getAlched(), alchPrice, already + more, where);
 	}
 
 	@Override
@@ -139,13 +192,14 @@ public final class LootItem
 		}
 		LootItem other = (LootItem) o;
 		return id == other.id && quantity == other.quantity && price == other.price && getLeft() == other.getLeft()
-			&& getAlched() == other.getAlched() && alchPrice == other.alchPrice && Objects.equals(name, other.name);
+			&& getAlched() == other.getAlched() && alchPrice == other.alchPrice && getMoved() == other.getMoved()
+			&& getDestination() == other.getDestination() && Objects.equals(name, other.name);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(id, name, quantity, price, getLeft(), getAlched(), alchPrice);
+		return Objects.hash(id, name, quantity, price, getLeft(), getAlched(), alchPrice, getMoved(), getDestination());
 	}
 
 	@Override

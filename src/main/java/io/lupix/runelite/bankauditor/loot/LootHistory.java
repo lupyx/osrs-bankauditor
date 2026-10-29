@@ -125,17 +125,19 @@ public final class LootHistory
 	}
 
 	/**
-	 * The newest record that still holds some of the item as an item, or null. Loot that gets alched is
-	 * usually what just dropped, so the newest drop is the one marked.
+	 * The newest record with some of the item that reached the inventory and is still an item, or null. Loot
+	 * that gets alched is usually what just dropped, so the newest drop is the one marked.
 	 */
 	public LootRecord newestHolding(int itemId)
 	{
 		for (int i = records.size() - 1; i >= 0; i--)
 		{
-			LootRecord record = records.get(i);
-			if (record.quantityOf(itemId) > 0)
+			for (LootItem item : records.get(i).getItems())
 			{
-				return record;
+				if (item.getId() == itemId && item.getKept() > 0)
+				{
+					return records.get(i);
+				}
 			}
 		}
 		return null;

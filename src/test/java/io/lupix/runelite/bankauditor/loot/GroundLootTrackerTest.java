@@ -3,6 +3,7 @@ package io.lupix.runelite.bankauditor.loot;
 import java.util.Arrays;
 import java.util.List;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -33,8 +34,13 @@ public class GroundLootTrackerTest
 		tracker.dropRecorded(record, 0);
 		tracker.spawned(pile, HIDE, 2, TILE, VISIBLE, DESPAWN, 0);
 
-		assertNull(tracker.despawned(pile, 10));
+		GroundLootTracker.Outcome taken = tracker.despawned(pile, 10);
+		assertFalse(taken.isLeft());
+		assertSame(record, taken.getRecord());
+		assertEquals(HIDE, taken.getItemId());
+		assertEquals(2, taken.getQuantity());
 		assertEquals(0, tracker.followedCount());
+		assertNull(tracker.despawned(new Object(), 11));
 	}
 
 	@Test
@@ -47,7 +53,7 @@ public class GroundLootTrackerTest
 		tracker.spawned(pile, HIDE, 2, TILE, VISIBLE, DESPAWN, 0);
 		tracker.dropRecorded(record, 1);
 
-		GroundLootTracker.Left left = tracker.despawned(pile, DESPAWN);
+		GroundLootTracker.Outcome left = left(tracker.despawned(pile, DESPAWN));
 		assertSame(record, left.getRecord());
 		assertEquals(HIDE, left.getItemId());
 		assertEquals(2, left.getQuantity());
@@ -66,8 +72,8 @@ public class GroundLootTrackerTest
 		tracker.spawned(stolen, BONES, 2, otherTile, VISIBLE, DESPAWN, 0);
 
 		tracker.takeClicked(HIDE, TILE);
-		assertNull(tracker.despawned(taken, 150));
-		assertEquals(BONES, tracker.despawned(stolen, 150).getItemId());
+		assertNull(left(tracker.despawned(taken, 150)));
+		assertEquals(BONES, left(tracker.despawned(stolen, 150)).getItemId());
 	}
 
 	@Test
@@ -84,9 +90,9 @@ public class GroundLootTrackerTest
 		// More than the drop had, so this one is somebody else's or the player's own
 		tracker.spawned(third, BONES, 1, TILE, VISIBLE, DESPAWN, 0);
 
-		assertNull(tracker.despawned(first, 5));
-		assertEquals(1, tracker.despawned(second, DESPAWN).getQuantity());
-		assertNull(tracker.despawned(third, DESPAWN));
+		assertNull(left(tracker.despawned(first, 5)));
+		assertEquals(1, left(tracker.despawned(second, DESPAWN)).getQuantity());
+		assertNull(left(tracker.despawned(third, DESPAWN)));
 	}
 
 	@Test
@@ -98,7 +104,7 @@ public class GroundLootTrackerTest
 		tracker.tick(5);
 		tracker.dropRecorded(drop(), 5);
 
-		assertNull(tracker.despawned(pile, DESPAWN));
+		assertNull(left(tracker.despawned(pile, DESPAWN)));
 	}
 
 	@Test
@@ -116,11 +122,11 @@ public class GroundLootTrackerTest
 		// The hide is still in the new scene, the bones are not
 		Object hideAgain = new Object();
 		tracker.spawned(hideAgain, HIDE, 2, TILE, VISIBLE, DESPAWN, 3);
-		List<GroundLootTracker.Left> left = tracker.tick(4);
+		List<GroundLootTracker.Outcome> left = tracker.tick(4);
 
 		assertEquals(1, left.size());
 		assertEquals(BONES, left.get(0).getItemId());
-		assertNull(tracker.despawned(hideAgain, 10));
+		assertNull(left(tracker.despawned(hideAgain, 10)));
 	}
 
 	@Test
@@ -134,11 +140,11 @@ public class GroundLootTrackerTest
 		tracker.spawned(hide, HIDE, 2, TILE, VISIBLE, DESPAWN, 0);
 		tracker.spawned(bones, BONES, 2, TILE, VISIBLE, DESPAWN, 0);
 
-		GroundLootTracker.Left hideLeft = tracker.despawned(hide, DESPAWN);
+		GroundLootTracker.Outcome hideLeft = left(tracker.despawned(hide, DESPAWN));
 		LootRecord updated = record.withLeft(hideLeft.getItemId(), hideLeft.getQuantity());
 		tracker.replace(record, updated);
 
-		assertSame(updated, tracker.despawned(bones, DESPAWN).getRecord());
+		assertSame(updated, left(tracker.despawned(bones, DESPAWN)).getRecord());
 	}
 
 	@Test
@@ -153,8 +159,8 @@ public class GroundLootTrackerTest
 		tracker.spawned(bones, BONES, 2, TILE, 0, 0, 50);
 
 		tracker.takeClicked(HIDE, TILE);
-		assertNull(tracker.despawned(hide, 55));
-		assertEquals(BONES, tracker.despawned(bones, 55).getItemId());
+		assertNull(left(tracker.despawned(hide, 55)));
+		assertEquals(BONES, left(tracker.despawned(bones, 55)).getItemId());
 	}
 
 	@Test
@@ -171,5 +177,13 @@ public class GroundLootTrackerTest
 		assertEquals(0, updated.withLeft(HIDE, 5).quantityOf(HIDE));
 		assertSame(record, record.withLeft(995, 1));
 		assertTrue(record.getItems().get(1).getLeft() == 0);
+	}
+
+	/**
+	 * The outcome when the pile was left on the floor, or null when it was picked up or never followed.
+	 */
+	private static GroundLootTracker.Outcome left(GroundLootTracker.Outcome outcome)
+	{
+		return outcome != null && outcome.isLeft() ? outcome : null;
 	}
 }

@@ -66,6 +66,35 @@ public class LootStateCodecTest
 	}
 
 	@Test
+	public void whereLootWentIsSavedAndOldDataHasNone()
+	{
+		LootHistory history = new LootHistory();
+		history.add(new LootRecord(1000, "Black dragon", LootSourceType.NPC, 227, null,
+			Arrays.asList(new LootItem(536, "Dragon bones", 1, 2500, 0, 0, 0, 1, Destination.BONECRUSHER),
+				new LootItem(207, "Grimy ranarr weed", 2, 7000, 0, 0, 0, 1, Destination.HERB_SACK))));
+
+		String json = codec.writeHistory(history);
+		assertTrue(json.contains("\"w\":\"bc\""));
+		LootHistory loaded = codec.readHistory(json);
+		assertEquals(history.oldestFirst(), loaded.oldestFirst());
+		LootItem herbs = loaded.oldestFirst().get(0).getItems().get(1);
+		assertEquals(Destination.HERB_SACK, herbs.getDestination());
+		assertEquals(1, herbs.getMoved());
+		assertEquals(1, herbs.getKept());
+
+		LootHistory old = codec.readHistory("[{\"t\":1000,\"s\":\"Vorkath\",\"k\":\"NPC\",\"c\":732,"
+			+ "\"i\":[{\"id\":1747,\"n\":\"Black dragonhide\",\"q\":2,\"p\":3000}]}]");
+		assertNull(old.oldestFirst().get(0).getItems().get(0).getDestination());
+		assertEquals(2, old.oldestFirst().get(0).getItems().get(0).getKept());
+
+		// A destination from a newer version reads as nothing moved
+		LootHistory newer = codec.readHistory("[{\"t\":1000,\"s\":\"Vorkath\",\"k\":\"NPC\",\"c\":732,"
+			+ "\"i\":[{\"id\":1747,\"n\":\"Black dragonhide\",\"q\":2,\"p\":3000,\"m\":2,\"w\":\"zz\"}]}]");
+		assertEquals(0, newer.oldestFirst().get(0).getItems().get(0).getMoved());
+		assertEquals(2, newer.oldestFirst().get(0).quantityOf(1747));
+	}
+
+	@Test
 	public void slayerTaskIsSavedOnDropsAndOldDataHasNone()
 	{
 		LootHistory history = new LootHistory();

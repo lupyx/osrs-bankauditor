@@ -1,5 +1,6 @@
 package io.lupix.runelite.bankauditor.ui;
 
+import io.lupix.runelite.bankauditor.loot.Destination;
 import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
@@ -234,6 +235,49 @@ public class LootGroupsTest
 		assertEquals(3 * 120, lines.get(1).getValue());
 		assertEquals(LootGroups.Line.Kind.LEFT, lines.get(2).getKind());
 		assertEquals(5 * 200 + 3 * 120, group.getTotalValue());
+	}
+
+	@Test
+	public void lootThatWentSomewhereElseSaysWhere()
+	{
+		List<LootRecord> records = Arrays.asList(
+			drop(1, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 10, 200, 0, 0, 0, 4, Destination.RUNE_POUCH),
+				new LootItem(BONES, "Bones", 3, 100, 0, 0, 0, 2, Destination.BONECRUSHER)),
+			drop(2, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 5, 200, 0, 0, 0, 5, Destination.RUNE_POUCH),
+				new LootItem(BONES, "Bones", 1, 100, 0, 0, 0, 1, Destination.ASH_SANCTIFIER)));
+
+		List<LootGroups.Line> lines = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, NO_TRIPS, ZONE)
+			.get(0).getLines();
+
+		// Kept and stored by value, then used up, and each destination gets its own line
+		assertEquals(5, lines.size());
+		assertEquals(LootGroups.Line.Kind.STORED, lines.get(0).getKind());
+		assertEquals(Destination.RUNE_POUCH, lines.get(0).getDestination());
+		assertEquals(9, lines.get(0).getQuantity());
+		assertTrue(lines.get(0).isCounted());
+		assertEquals(LootGroups.Line.Kind.KEPT, lines.get(1).getKind());
+		assertEquals(6, lines.get(1).getQuantity());
+		assertEquals(LootGroups.Line.Kind.KEPT, lines.get(2).getKind());
+		assertEquals(BONES, lines.get(2).getId());
+		assertEquals(LootGroups.Line.Kind.USED, lines.get(3).getKind());
+		assertEquals(Destination.BONECRUSHER, lines.get(3).getDestination());
+		assertEquals(2, lines.get(3).getQuantity());
+		assertFalse(lines.get(3).isCounted());
+		assertEquals(Destination.ASH_SANCTIFIER, lines.get(4).getDestination());
+		assertEquals(1, lines.get(4).getQuantity());
+	}
+
+	@Test
+	public void storedLootCountsAndUsedUpLootDoesNot()
+	{
+		List<LootRecord> records = Arrays.asList(
+			drop(1, "Goblin", LUMBRIDGE, 301, new LootItem(RUNE, "Death rune", 10, 200, 0, 0, 0, 4, Destination.RUNE_POUCH),
+				new LootItem(BONES, "Bones", 3, 100, 0, 0, 0, 3, Destination.BONECRUSHER)));
+
+		LootGroups.Group group = LootGroups.group(records, LootGroups.Mode.SOURCE, LootGroups.Interval.DAY, NO_TRIPS, ZONE).get(0);
+
+		assertEquals(10 * 200, group.getTotalValue());
+		assertEquals(10 * 200, records.get(0).getTotalValue());
 	}
 
 	@Test

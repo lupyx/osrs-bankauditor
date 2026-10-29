@@ -30,19 +30,29 @@ public final class GroundLootTracker
 	static final int GIVE_UP_TICKS = 1000;
 
 	/**
-	 * Some loot that was left on the floor.
+	 * What became of a followed pile: picked up, or left on the floor.
 	 */
-	public static final class Left
+	public static final class Outcome
 	{
 		private final LootRecord record;
 		private final int itemId;
 		private final long quantity;
+		private final boolean left;
 
-		Left(LootRecord record, int itemId, long quantity)
+		Outcome(LootRecord record, int itemId, long quantity, boolean left)
 		{
 			this.record = record;
 			this.itemId = itemId;
 			this.quantity = quantity;
+			this.left = left;
+		}
+
+		/**
+		 * Whether it stayed on the floor. Otherwise the player picked it up.
+		 */
+		public boolean isLeft()
+		{
+			return left;
 		}
 
 		public LootRecord getRecord()
@@ -192,9 +202,9 @@ public final class GroundLootTracker
 	/**
 	 * A pile disappeared from the floor.
 	 *
-	 * @return what was left behind, or null when it was picked up or isn't a followed pile
+	 * @return whether it was picked up or left behind, or null when it isn't a followed pile
 	 */
-	public Left despawned(Object handle, int tick)
+	public Outcome despawned(Object handle, int tick)
 	{
 		for (Iterator<Pile> it = followed.iterator(); it.hasNext(); )
 		{
@@ -208,7 +218,7 @@ public final class GroundLootTracker
 			boolean expired = pile.despawnTime > pile.spawnTick && tick >= pile.despawnTime - 1;
 			boolean onlyMine = pile.visibleTime > pile.spawnTick && tick < pile.visibleTime;
 			boolean pickedUp = !expired && (onlyMine || pile.clicked);
-			return pickedUp ? null : new Left(pile.record, pile.itemId, pile.quantity);
+			return new Outcome(pile.record, pile.itemId, pile.quantity, !pickedUp);
 		}
 		return null;
 	}
@@ -231,9 +241,9 @@ public final class GroundLootTracker
 	 *
 	 * @return piles that didn't come back after a scene reload, and so were left behind
 	 */
-	public List<Left> tick(int tick)
+	public List<Outcome> tick(int tick)
 	{
-		List<Left> left = new ArrayList<>();
+		List<Outcome> left = new ArrayList<>();
 		if (reloading)
 		{
 			reloading = false;
@@ -243,7 +253,7 @@ public final class GroundLootTracker
 				if (!pile.seen)
 				{
 					it.remove();
-					left.add(new Left(pile.record, pile.itemId, pile.quantity));
+					left.add(new Outcome(pile.record, pile.itemId, pile.quantity, true));
 				}
 			}
 		}

@@ -96,7 +96,8 @@ public final class LootRecord
 	}
 
 	/**
-	 * How many of the item this drop gave that are still items, not counting any left on the floor or alched.
+	 * How many of the item this drop gave that are still items, wherever they went. Any left on the floor,
+	 * alched or used up as they dropped don't count.
 	 */
 	public long quantityOf(int itemId)
 	{
@@ -105,21 +106,22 @@ public final class LootRecord
 		{
 			if (item.getId() == itemId)
 			{
-				total += item.getKept();
+				total += item.getOwned();
 			}
 		}
 		return total;
 	}
 
 	/**
-	 * GE value of what was kept plus the gold from alching, so items left on the floor don't count.
+	 * GE value of what the player still has plus the gold from alching, so items left on the floor or used up
+	 * don't count.
 	 */
 	public long getTotalValue()
 	{
 		long total = 0;
 		for (LootItem item : getItems())
 		{
-			total += item.getPrice() * item.getKept() + item.getAlchPrice() * item.getAlched();
+			total += item.getPrice() * item.getOwned() + item.getAlchPrice() * item.getAlched();
 		}
 		return total;
 	}
@@ -164,6 +166,33 @@ public final class LootRecord
 			{
 				long mark = Math.min(remaining, item.getKept());
 				updated.set(i, item.withMoreLeft(mark));
+				remaining -= mark;
+			}
+		}
+		if (remaining == quantity)
+		{
+			return this;
+		}
+		return new LootRecord(timestamp, source, type, combatLevel, location, updated, task);
+	}
+
+	/**
+	 * A copy with up to {@code quantity} more of the item marked as gone to {@code where}, or this record when
+	 * none of it is left to mark. Items that already went somewhere else are skipped, as an item line keeps
+	 * one destination.
+	 */
+	public LootRecord withMoved(int itemId, long quantity, Destination where)
+	{
+		List<LootItem> updated = new ArrayList<>(getItems());
+		long remaining = quantity;
+		for (int i = 0; i < updated.size() && remaining > 0; i++)
+		{
+			LootItem item = updated.get(i);
+			Destination already = item.getDestination();
+			if (item.getId() == itemId && item.getKept() > 0 && (already == null || already == where))
+			{
+				long mark = Math.min(remaining, item.getKept());
+				updated.set(i, item.withMoreMoved(mark, where));
 				remaining -= mark;
 			}
 		}

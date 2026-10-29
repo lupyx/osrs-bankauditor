@@ -37,6 +37,14 @@ Each box shows the boss icon when the source has one on the hiscores (Vorkath, Z
 
 Casting High Level Alchemy on looted items is noticed too. The item gets a line of its own saying it was high alched, with the gold it gave, and that gold counts toward the box totals. Only items the plugin counts as loot are marked, starting with the newest drop that still has one. Stacks worth a lot get colored by value tier like ground items: 20K, 100K, 1M and 10M gp by default. The tiers and colors are in the Loot colors section of the settings.
 
+Loot that goes somewhere by itself gets a line of its own as well, saying where it went, so you can tell why it never showed up in your inventory:
+
+- Bones crushed by a bonecrusher or bonecrusher necklace, and demonic ashes scattered by an ash sanctifier, as they drop. These are used up, so their names turn blue, their values are grayed out and they don't count toward the box totals.
+- Revenant ether absorbed by a bracelet of ethereum.
+- Items you pick up that go straight into an open herb sack, seed box, gem bag or looting bag (in the Wilderness), into your rune pouch, or into your ammo slot. Seeds pickpocketed from a Master Farmer into an open seed box count too.
+
+Everything except the crushed bones and scattered ashes is still yours, so it counts like any other item. The plugin spots crushing, scattering and absorbing by the device's charges changing on the same tick as the kill. For pickups it checks whether the item reached your inventory, and when it didn't, which open container you carry takes that kind of item. If the in-game loot tracker is set to ignore consumed drops, crushed bones and scattered ashes aren't part of the drop to begin with, so there's nothing to mark.
+
 **Deleting loot.** Each box has a small bin at the right end of its footer. Click it to delete the drops in that box. It asks first, with Cancel as the default, and the box's header turns red while it asks so you can see which one is going. In a combined view that means every drop in the box, or only the ones matching your search while you search. The red Clear loot data button pinned to the bottom of the sidebar deletes everything. Both only show while you're logged in, since the loot belongs to the account you're on, and Clear loot data hides when there's nothing to clear. Deleting drops only changes the history: items in your bank that counted as loot still do.
 
 ## Settings

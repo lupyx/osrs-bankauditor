@@ -1,5 +1,6 @@
 package io.lupix.runelite.bankauditor.ui;
 
+import io.lupix.runelite.bankauditor.loot.Destination;
 import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootLocation;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
@@ -227,48 +228,64 @@ public final class LootGroups
 	}
 
 	/**
-	 * One item summed over every drop in a group. What was alched and what was left on the floor get lines
-	 * of their own.
+	 * One item summed over every drop in a group. What went somewhere else by itself, what was alched and what
+	 * was left on the floor get lines of their own.
 	 */
 	public static final class Line
 	{
 		public enum Kind
 		{
 			KEPT,
+			/**
+			 * Went into a container by itself, like an open herb sack. Still the player's.
+			 */
+			STORED,
 			ALCHED,
+			/**
+			 * Used up as it dropped, like bones a bonecrusher crushed.
+			 */
+			USED,
 			LEFT
 		}
 
 		/**
-		 * Kept lines first, then alched, then left on the floor, each most valuable first.
+		 * Kept lines first, stored ones mixed in with them since they are kept too, then alched, used up and
+		 * left on the floor, each most valuable first.
 		 */
-		static final Comparator<Line> ORDER = Comparator.comparing(Line::getKind)
+		static final Comparator<Line> ORDER = Comparator.comparingInt((Line line) -> line.kind == Kind.STORED ? Kind.KEPT.ordinal() : line.kind.ordinal())
 			.thenComparing(Comparator.comparingLong(Line::getValue).reversed())
 			.thenComparing(Comparator.comparingLong(Line::getQuantity).reversed());
 
 		private final int id;
 		private final String name;
 		private final Kind kind;
+		private final Destination destination;
 		private long quantity;
 		private long value;
 		private long alchPrice;
 
-		Line(int id, String name, Kind kind)
+		Line(int id, String name, Kind kind, Destination destination)
 		{
 			this.id = id;
 			this.name = name;
 			this.kind = kind;
+			this.destination = destination;
 		}
 
 		/**
-		 * The item as up to three lines: kept, alched and left on the floor.
+		 * The item as up to four lines: kept, gone somewhere else, alched and left on the floor.
 		 */
 		static List<Line> of(LootItem item)
 		{
-			List<Line> lines = new ArrayList<>(3);
+			List<Line> lines = new ArrayList<>(4);
 			if (item.getKept() > 0)
 			{
 				lines.add(part(item, Kind.KEPT, item.getKept()));
+			}
+			Destination where = item.getDestination();
+			if (where != null)
+			{
+				lines.add(part(item, where.isUsedUp() ? Kind.USED : Kind.STORED, item.getMoved()));
 			}
 			if (item.getAlched() > 0)
 			{
@@ -283,7 +300,7 @@ public final class LootGroups
 
 		private static Line part(LootItem item, Kind kind, long quantity)
 		{
-			Line line = new Line(item.getId(), item.getName(), kind);
+			Line line = new Line(item.getId(), item.getName(), kind, kind == Kind.STORED || kind == Kind.USED ? item.getDestination() : null);
 			line.quantity = quantity;
 			line.alchPrice = item.getAlchPrice();
 			line.value = (kind == Kind.ALCHED ? item.getAlchPrice() : item.getPrice()) * quantity;
@@ -292,7 +309,7 @@ public final class LootGroups
 
 		private long key()
 		{
-			return (long) id << 2 | kind.ordinal();
+			return (long) id << 8 | kind.ordinal() << 4 | (destination == null ? 0 : destination.ordinal() + 1);
 		}
 
 		public int getId()
@@ -326,6 +343,22 @@ public final class LootGroups
 		public boolean isAlched()
 		{
 			return kind == Kind.ALCHED;
+		}
+
+		/**
+		 * Where a stored or used up line went, or null.
+		 */
+		public Destination getDestination()
+		{
+			return destination;
+		}
+
+		/**
+		 * Whether the line adds to what a drop was worth. Loot left on the floor or used up doesn't.
+		 */
+		public boolean isCounted()
+		{
+			return kind != Kind.LEFT && kind != Kind.USED;
 		}
 
 		/**
@@ -523,11 +556,11 @@ public final class LootGroups
 			{
 				for (Line part : Line.of(item))
 				{
-					Line line = group.lines.computeIfAbsent(part.key(), k -> new Line(part.id, part.name, part.kind));
+					Line line = group.lines.computeIfAbsent(part.key(), k -> new Line(part.id, part.name, part.kind, part.destination));
 					line.quantity += part.quantity;
 					line.value += part.value;
 					line.alchPrice = part.alchPrice;
-					if (!part.isLeft())
+					if (part.isCounted())
 					{
 						group.totalValue += part.value;
 					}

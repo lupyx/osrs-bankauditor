@@ -1,5 +1,6 @@
 package io.lupix.runelite.bankauditor.ui;
 
+import io.lupix.runelite.bankauditor.loot.Destination;
 import io.lupix.runelite.bankauditor.loot.LootItem;
 import io.lupix.runelite.bankauditor.loot.LootRecord;
 import io.lupix.runelite.bankauditor.loot.TripLog;
@@ -109,6 +110,10 @@ public class BankAuditorPanel extends PluginPanel
 	private static final int ITEM_ICON_WIDTH = 36;
 	private static final int ITEM_ICON_HEIGHT = 32;
 	private static final Color ROW_ALT_COLOR = new Color(35, 35, 35);
+	/**
+	 * Names of loot used up as it dropped, like crushed bones. A cool blue, apart from the value tiers and alching.
+	 */
+	private static final Color USED_UP_COLOR = new Color(135, 170, 205);
 	private static final BufferedImage BIN_IMAGE = ImageUtil.loadImageResource(BankAuditorPanel.class, "/io/lupix/runelite/bankauditor/bin.png");
 	private static final ImageIcon BIN_ICON = new ImageIcon(BIN_IMAGE);
 	private static final ImageIcon BIN_OFF_ICON = new ImageIcon(ImageUtil.alphaOffset(ImageUtil.grayscaleImage(BIN_IMAGE), 0.6f));
@@ -1039,7 +1044,7 @@ public class BankAuditorPanel extends PluginPanel
 		long worth = 0;
 		for (LootGroups.Line line : lines)
 		{
-			if (line.isLeft())
+			if (!line.isCounted())
 			{
 				continue;
 			}
@@ -1277,19 +1282,26 @@ public class BankAuditorPanel extends PluginPanel
 	/**
 	 * One table row: the item icon with its quantity, the name, and a column with the stack's Grand Exchange
 	 * and high alchemy values, or only the higher one with best value only on. The name is colored by value
-	 * tier. Alched items show the gold they gave, and items left on the floor are grayed out.
+	 * tier. Alched items show the gold they gave, and items left on the floor are grayed out. Items that went
+	 * somewhere by themselves say where under the name, and the used up ones get gray values as they don't count.
 	 */
 	private JPanel itemRow(LootGroups.Line line, boolean odd)
 	{
 		Color background = odd ? ROW_ALT_COLOR : ColorScheme.DARKER_GRAY_COLOR;
 		boolean left = line.isLeft();
 		boolean alched = line.isAlched();
+		Destination where = line.getDestination();
+		boolean usedUp = where != null && where.isUsedUp();
+		// Values that don't count toward the totals are grayed out
+		boolean uncounted = !line.isCounted();
 		ItemValue value = itemValues.get(line.getId());
 		long haTotal = ItemValue.haValue(line.getId(), line.getQuantity(), value);
 		boolean showHaOnly = bestValueOnly && ItemValue.alchIsBetter(line.getValue(), haTotal, value);
-		Color tier = left || alched ? null : tiers.colorFor(showHaOnly ? haTotal : line.getValue());
+		Color tier = uncounted || alched ? null : tiers.colorFor(showHaOnly ? haTotal : line.getValue());
 		String note = left ? "Not picked up"
 			: alched ? "High alched for " + Formats.commas(line.getAlchPrice()) + " gp" + (line.getQuantity() > 1 ? " each" : "")
+			: usedUp ? where.getDescription() + ", so it isn't counted in the totals"
+			: where != null ? where.getDescription()
 			: null;
 
 		JPanel row = new JPanel(new BorderLayout(6, 0));
@@ -1305,7 +1317,7 @@ public class BankAuditorPanel extends PluginPanel
 		row.add(icon, BorderLayout.WEST);
 
 		Color nameColor = left ? ColorScheme.MEDIUM_GRAY_COLOR : alched ? ColorScheme.GRAND_EXCHANGE_ALCH
-			: tier != null ? tier : Color.WHITE;
+			: usedUp ? USED_UP_COLOR : tier != null ? tier : Color.WHITE;
 		JPanel text = new JPanel(new GridLayout(2, 1));
 		text.setOpaque(false);
 		JLabel name = smallLabel(line.getName(), nameColor);
@@ -1313,7 +1325,8 @@ public class BankAuditorPanel extends PluginPanel
 		name.setToolTipText(note != null ? note : line.getName());
 		text.add(name);
 		// Left items only say so on hover; the gray already sets them apart
-		String amount = "x " + Formats.commas(line.getQuantity()) + (alched ? " high alched" : "");
+		String amount = "x " + Formats.commas(line.getQuantity())
+			+ (alched ? " high alched" : where != null ? " " + where.getShortText() : "");
 		JLabel amountLabel = smallLabel(amount, left ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
 		amountLabel.setToolTipText(note);
 		text.add(amountLabel);
@@ -1331,7 +1344,7 @@ public class BankAuditorPanel extends PluginPanel
 			{
 				values.setLayout(new BorderLayout());
 				JLabel best = bestValue(line, value, haTotal, showHaOnly, tier);
-				if (left)
+				if (uncounted)
 				{
 					best.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
 					best.setToolTipText(note);
@@ -1349,7 +1362,7 @@ public class BankAuditorPanel extends PluginPanel
 			{
 				JLabel ge = geValue(line, value, tier);
 				JLabel ha = haValue(line, value);
-				if (left)
+				if (uncounted)
 				{
 					ge.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
 					ha.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
